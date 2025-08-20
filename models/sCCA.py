@@ -4,7 +4,6 @@ from sklearn import cross_decomposition
 from typing import Sequence
 
 
-
 class Classifier(object):
     def __init__(self,
                  freq_list: Sequence[float],
