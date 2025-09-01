@@ -4,8 +4,9 @@ import torch.nn as nn
 
 
 class EEGNet(nn.Module):
-    def __init__(self, chans=64, dropout_rate=0.5,
-                 kern_length=64, F1=8, D=2, F2=16):
+    def __init__(self, chans=64, samples=128,
+                 dropout_rate=0.5, kern_length=64,
+                 F1=8, D=2, F2=16):
         """
         Args:
             chans (int): number of EEG channels
@@ -31,7 +32,8 @@ class EEGNet(nn.Module):
             nn.Dropout(p=dropout_rate)
         )
 
-        # Block 2: separable conv = depthwise (1,16) + pointwise (1,1)
+        # Block 2: depthwise separable convolution
+        # depthwise (1,16) + pointwise (1,1)
         self.block2 = nn.Sequential(
             nn.Conv2d(F1 * D, F1 * D, kernel_size=(1, 16),
                       padding=(0, 8), groups=F1 * D, bias=False),
