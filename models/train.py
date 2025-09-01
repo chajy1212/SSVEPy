@@ -180,7 +180,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
+    parser.add_argument("--data_root", type=str, default="your data path")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
