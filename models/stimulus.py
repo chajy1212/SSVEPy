@@ -7,19 +7,19 @@ class StimulusEncoder(nn.Module):
     """
     Stimulus Encoder
     - Encodes sinusoidal reference signals (sin, cos) into latent features.
-    - Specifically designed for SSVEP tasks where frequency/phase patterns are important.
     - Input: (B, T, 2) -> B=batch, T=time length, 2=[sin, cos]
-    - Output: (B, hidden_dim) stimulus embedding
+    - Output: (B, D) -> flattened latent representation
     """
     def __init__(self, in_dim=2, hidden_dim=64):
         """
         Args:
-            in_dim (int): Input dimension, usually 2 (sin, cos)
-            hidden_dim (int): Output embedding dimension
+            in_dim (int): input dimension, usually 2 (sin, cos)
+            hidden_dim (int): output embedding dimension (D)
         """
         super().__init__()
+        self.hidden_dim = hidden_dim
 
-        # Conv-based encoder: preserves temporal structure and frequency information
+        # preserves temporal structure and frequency information
         self.encoder = nn.Sequential(
             nn.Conv1d(in_dim, 32, kernel_size=9, padding=4),
             nn.ReLU(),
@@ -34,7 +34,7 @@ class StimulusEncoder(nn.Module):
             stim (Tensor): (B, T, 2) sinusoidal stimulus signals
 
         Returns:
-            Tensor: (B, hidden_dim) stimulus embedding
+            Tensor: (B, hidden_dim) latent representation
         """
         stim = stim.permute(0, 2, 1)    # (B, T, 2) -> (B, 2, T)
         feat = self.encoder(stim)       # (B, hidden_dim, 1)
