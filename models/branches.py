@@ -45,14 +45,16 @@ class TemplateBranch(nn.Module):
     Output: (B, D_temp) latent representation from DTN
     Note   : returns representation only (ignores logits)
     """
-    def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes):
+    def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
         self.network = DTN(n_bands=n_bands, n_features=n_features,
                            n_channels=n_channels, n_samples=n_samples,
                            n_classes=n_classes)
-        self.proj = nn.Linear(32768, 64)
+
+        # Projection: flatten dimension → D_temp
+        self.proj = nn.Linear(32768, D_temp)
 
     def forward(self, x, y=None):
-        logits, feat = self.network(x, y, return_feat=True) # (B, 32768)
-        feat = self.proj(feat)                              # (B, 64)
+        logits, feat = self.network(x, y, return_feat=True) # (B, D_flat)
+        feat = self.proj(feat)                              # (B, D_temp)
         return feat

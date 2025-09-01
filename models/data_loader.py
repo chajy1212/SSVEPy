@@ -35,15 +35,17 @@ class SSVEPDataset(Dataset):
         label_hz = int(self.labels[idx])  # stimulus frequency
         class_label = self.freq2class[label_hz]
 
-        # --- EEG input ---
+        # EEG input
         eeg = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0)  # (1,C,T)
 
-        # --- Stimulus reference (sin, cos) ---
+        # Stimulus reference
         t = np.arange(self.T_stim) / self.sfreq
         f = label_hz
         stim = np.stack([np.sin(2 * np.pi * f * t), np.cos(2 * np.pi * f * t)], axis=-1)  # (T_stim,2)
         stim = torch.tensor(stim, dtype=torch.float32)
 
+        task = self.tasks[idx]
+
         assert eeg.shape[-1] == stim.shape[0], "EEG segment length and stimulus length must match (2s)."
 
-        return eeg, stim, class_label
+        return eeg, stim, class_label, task

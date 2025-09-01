@@ -42,22 +42,23 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     total_loss, correct, total = 0, 0, 0
 
-    for eeg, stim, label in dataloader:
+    for eeg, stim, label, _ in dataloader:
         eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
 
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)                   # (B, D_eeg)
-        stim_feat = stim_branch(stim)                # (B, D_query)
-        temp_feat = temp_branch(eeg, label)          # (B, D_query)
-        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
+        eeg_feat = eeg_branch(eeg)                                  # (B, D_eeg)
+        stim_feat = stim_branch(stim)                               # (B, D_query)
+        temp_feat = temp_branch(eeg, label)                         # (B, D_query)
+        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
 
         # Loss + backward
         loss = criterion(logits, label)
         loss.backward()
         optimizer.step()
 
+        # Metrics
         total_loss += loss.item()
         _, pred = logits.max(1)
         total += label.size(0)
@@ -76,9 +77,10 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     dual_attn.eval()
 
     total_loss, correct, total = 0, 0, 0
+    task_correct, task_total = {}, {}
 
     with torch.no_grad():
-        for eeg, stim, label in dataloader:
+        for eeg, stim, label, task in dataloader:
             eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
 
             eeg_feat = eeg_branch(eeg)
@@ -86,16 +88,29 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
             temp_feat = temp_branch(eeg, label)
             logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
+            # Loss
             loss = criterion(logits, label)
             total_loss += loss.item()
 
+            # Accuracy
             _, pred = logits.max(1)
             total += label.size(0)
             correct += pred.eq(label).sum().item()
 
+            # Per-task accuracy
+            for t, p, l in zip(task, pred.cpu(), label.cpu()):
+                t = str(t)
+                if t not in task_correct:
+                    task_correct[t] = 0
+                    task_total[t] = 0
+                task_correct[t] += int(p == l)
+                task_total[t] += 1
+
     acc = correct / total
     avg_loss = total_loss / len(dataloader)
-    return avg_loss, acc
+    task_acc = {t: task_correct[t] / task_total[t] for t in task_total}
+
+    return avg_loss, acc, task_acc
 
 
 # ===== Main =====
@@ -103,7 +118,7 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Dataset split (ses-01 → train, ses-02 → test)
+    # Dataset split: session-01 = train, session-02 = test
     train_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-01.npz")))
     test_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-02.npz")))
 
@@ -122,16 +137,21 @@ def main(args):
     stim_branch = StimulusBranch(input_dim=2, hidden_dim=args.d_query).to(device)
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                  n_channels=n_channels, n_samples=n_samples,
-                                 n_classes=n_classes).to(device)
-    dual_attn = DualAttention(d_eeg=1024, d_query=args.d_query,
-                              d_model=args.d_model, num_heads=4,
+                                 n_classes=n_classes,
+                                 D_temp=args.d_query).to(device)
+    dual_attn = DualAttention(d_eeg=1024,
+                              d_query=args.d_query,
+                              d_model=args.d_model,
+                              num_heads=4,
                               proj_dim=n_classes).to(device)
 
-    # Optimizer & loss
+    # Optimizer, loss, scheduler
     params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
              list(temp_branch.parameters()) + list(dual_attn.parameters())
-    optimizer = optim.Adam(params, lr=args.lr)
-    criterion = nn.CrossEntropyLoss()
+
+    optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     print_model_size(dual_attn)
 
@@ -141,21 +161,28 @@ def main(args):
             eeg_branch, stim_branch, temp_branch, dual_attn,
             train_loader, optimizer, criterion, device
         )
-        test_loss, test_acc = evaluate(
+        test_loss, test_acc, task_acc = evaluate(
             eeg_branch, stim_branch, temp_branch, dual_attn,
             test_loader, criterion, device
         )
 
-        print(f"[Epoch {epoch:02d}] "
+        scheduler.step()
+
+        # Log results
+        print(f"\n[Epoch {epoch:02d}] "
               f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
               f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
+
+        # Per-task accuracy
+        for t, acc in task_acc.items():
+            print(f"   Task {t}: {acc:.4f}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
