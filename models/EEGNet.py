@@ -4,9 +4,8 @@ import torch.nn as nn
 
 
 class EEGNet(nn.Module):
-    def __init__(self, chans=64, samples=128,
-                 dropout_rate=0.5, kern_length=64,
-                 F1=8, D=2, F2=16, norm_rate=0.25):
+    def __init__(self, chans=64, dropout_rate=0.5,
+                 kern_length=64, F1=8, D=2, F2=16):
         """
         Args:
             chans (int): number of EEG channels
