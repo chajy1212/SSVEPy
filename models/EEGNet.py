@@ -19,42 +19,53 @@ class EEGNet(nn.Module):
         """
         super().__init__()
 
-        # Block 1: temporal conv → depthwise spatial conv
+        # ----- Block 1: temporal convolution + depthwise spatial convolution -----
         self.block1 = nn.Sequential(
+            # Temporal Conv (1 x kernLength)
             nn.Conv2d(1, F1, kernel_size=(1, kern_length),
                       padding=(0, kern_length // 2), bias=False),
             nn.BatchNorm2d(F1),
+
+            # Depthwise Conv across channels
             nn.Conv2d(F1, F1 * D, kernel_size=(chans, 1),
                       groups=F1, bias=False),
             nn.BatchNorm2d(F1 * D),
             nn.ELU(),
+
+            # Temporal downsampling
             nn.AvgPool2d(kernel_size=(1, 4)),
             nn.Dropout(p=dropout_rate)
         )
 
-        # Block 2: depthwise separable convolution
-        # depthwise (1,16) + pointwise (1,1)
+        # ----- Block 2: separable convolution (depthwise + pointwise) -----
         self.block2 = nn.Sequential(
+            # Depthwise Conv (1 x 16)
             nn.Conv2d(F1 * D, F1 * D, kernel_size=(1, 16),
                       padding=(0, 8), groups=F1 * D, bias=False),
+            # Pointwise Conv (1x1)
             nn.Conv2d(F1 * D, F2, kernel_size=(1, 1), bias=False),
             nn.BatchNorm2d(F2),
             nn.ELU(),
+
+            # Further temporal downsampling
             nn.AvgPool2d(kernel_size=(1, 8)),
             nn.Dropout(p=dropout_rate)
         )
 
+        # Flatten layer → output (B, D)
+        self.flatten = nn.Flatten()
+
+
     def forward(self, x):
         """
-        Forward EEGNet encoder
         Args:
             x: (B, 1, chans, samples)
         Returns:
-            feature map (B, F2, 1, T_out)
-            where T_out = samples // (4*8)
+            features: (B, D) flattened representation
         """
-        x = self.block1(x)  # (B, F1*D, 1, T/4)
-        x = self.block2(x)  # (B, F2, 1, T/32)
+        x = self.block1(x)              # (B, F1*D, 1, T/4)
+        x = self.block2(x)              # (B, F2, 1, T/32)
+        x = self.flatten(x)             # (B, D)
         return x
 
 
