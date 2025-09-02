@@ -10,8 +10,8 @@ from stimulus import StimulusEncoder
 class EEGBranch(nn.Module):
     """
     EEG branch using EEGNet as encoder.
-    Input : (B,1,C,T)
-    Output : (B,D_eeg) flattened EEG representation
+    Input : (B, 1, C, T)
+    Output : (B, D_eeg) flattened EEG representation
     """
     def __init__(self, chans, samples):
         super().__init__()
@@ -19,14 +19,14 @@ class EEGBranch(nn.Module):
 
     def forward(self, x):
         feat = self.encoder(x)                  # (B, F2, 1, T_out)
-        feat = feat.view(feat.size(0), -1)      # (B, D_eeg)
+        feat = feat.view(feat.size(0), -1)      # flatten → (B, D_eeg)
         return feat
 
 
 class StimulusBranch(nn.Module):
     """
     Stimulus branch using StimulusEncoder.
-    Input : (B, T, 2)    fundamental sin, cos
+    Input : (B, T, 2) sinusoidal references (sin, cos)
     Output: (B, D_stim)
     """
     def __init__(self, hidden_dim=128, n_harmonics=3):
@@ -36,9 +36,8 @@ class StimulusBranch(nn.Module):
 
     def forward(self, stim):
         """
-        stim: (B, T, 2)  fundamental sin/cos
-        Returns:
-            feat: (B, D_stim)
+        stim: (B, T, 2) fundamental sin/cos
+        Returns: (B, D_stim)
         """
         base_sin, base_cos = stim[..., 0], stim[..., 1]              # (B, T)
 
@@ -55,9 +54,8 @@ class StimulusBranch(nn.Module):
 class TemplateBranch(nn.Module):
     """
     Template branch using DTN.
-    Input : (B, 1, C, T), labels(optional)
-    Output : (B, D_temp) latent representation from DTN
-    Note : returns representation only (ignores logits)
+    Input : (B, 1, C, T), labels (optional)
+    Output : (B, D_temp) latent representation
     """
     def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
@@ -65,10 +63,10 @@ class TemplateBranch(nn.Module):
                            n_channels=n_channels, n_samples=n_samples,
                            n_classes=n_classes)
 
-        # Projection: flatten dimension → D_temp
-        self.proj = nn.Linear(32768, D_temp)
+        # Projection: (B, n_features) → (B, D_temp)
+        self.proj = nn.Linear(n_features, D_temp)
 
     def forward(self, x, y=None):
-        logits, feat = self.network(x, y, return_feat=True) # (B, D_flat) = (B, C*H*W)
+        _, feat = self.network(x, y, return_feat=True)      # (B, n_features)
         feat = self.proj(feat)                              # (B, D_temp)
         return feat

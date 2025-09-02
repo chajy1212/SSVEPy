@@ -65,25 +65,11 @@ class FTN(nn.Module):
 class DTN(nn.Module):
     """
     Dynamic Template Network
-     - Learns class-specific templates via moving-average update.
-     - By default returns only classification logits.
-     - Optionally, can also return latent representation (flat_feat).
-
-    Args:
-        n_bands (int): number of temporal filter bands
-        n_features (int): number of spatial filters
-        n_channels (int): number of EEG channels
-        n_samples (int): number of time samples
-        n_classes (int): number of classes
-        band_kernel (int): kernel size for temporal conv
-        pooling_kernel (int): pooling kernel size
-        dropout (float): dropout probability
-        momentum (float): template update momentum (None = 1/t)
-        eps (float): numerical stability constant
+     - Extracts conv features from EEG
+     - Global average pooling for dimension reduction
+     - Returns latent representation only
     """
-    def __init__(self,
-                 n_bands, n_features,
-                 n_channels, n_samples, n_classes,
+    def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes,
                  band_kernel=9, pooling_kernel=2,
                  dropout=0.5, momentum=None, eps=1e-8):
         super().__init__()
@@ -108,68 +94,54 @@ class DTN(nn.Module):
                                           padding=(0, band_kernel // 2), bias=False)),
         ]))
 
-        self.flatten = nn.Flatten()
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc_drop = nn.Dropout(dropout)
+        self.instance_norm = nn.InstanceNorm2d(1)
 
         # Initialize running templates
         with torch.no_grad():
-            x = torch.zeros(1, 1, n_channels, n_samples)    # (B,1,C,T)
+            x = torch.zeros(1, 1, n_channels, n_samples)
             feat = self.feature_extractor(x)
             self._register_templates(n_classes, *feat.shape[1:])
 
-        # Classification head
-        self.fc_layer = nn.Linear(feat.numel() // feat.shape[0], n_classes)
-        self.instance_norm = nn.InstanceNorm2d(1)
-
 
     def _register_templates(self, n_classes, *args):
-        """ Initialize class-specific templates with Xavier uniform distribution """
+        """ Initialize class-specific templates """
         self.register_buffer('running_template', torch.zeros(n_classes, *args))
         nn.init.xavier_uniform_(self.running_template, gain=1)
 
 
     def _update_templates(self, x, y):
-        """ Update templates online using exponential moving average """
+        """ Update templates with exponential moving average (EMA) """
         with torch.no_grad():
             self.num_batches_tracked += 1
             factor = (1.0 / float(self.num_batches_tracked)) if self.momentum is None else self.momentum
 
-            mask = F.one_hot(y, num_classes=self.running_template.shape[0]).float()     # (B, n_classes)
-            features = self.feature_extractor(x)                                        # (B, F, C’, T’)
+            mask = F.one_hot(y, num_classes=self.running_template.shape[0]).float()  # (B, n_classes)
+            features = self.feature_extractor(x)                                     # (B, F, C’, T’)
 
-            # Apply class mask → aggregate per class
             mask_data = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1) * features.unsqueeze(1)
             new_template = mask_data.sum(0) / (mask.sum(0).view(-1, 1, 1, 1) + self.eps)
 
-            # Exponential moving average update
             self.running_template = (1 - factor) * self.running_template + factor * new_template
 
 
     def forward(self, x, y=None, return_feat=True):
         """
-        Args:
-            x (Tensor): EEG input (B,1,C,T)
-            y (Tensor): class labels (B,) → optional (needed for template update in training mode)
-            return_feat (bool):
-                - True → return (logits, representation)
-                - False → return logits only
-
-        Returns:
-            logits (Tensor): classification scores (B, n_classes)
-            flat_feat (Tensor): latent representation (B,D) if return_feat=True
+        x: (B, 1, C, T)
+        return_feat=True → (logits=None, feat) 반환
         """
-        x = self.instance_norm(x)                 # (B,1,C,T)
-        feat = self.feature_extractor(x)          # (B,F,C’,T’)
-        flat_feat = feat.view(feat.size(0), -1)   # (B,D)
-
-        out = self.fc_drop(flat_feat)
-        logits = self.fc_layer(out)               # (B,n_classes)
+        x = self.instance_norm(x)
+        feat = self.feature_extractor(x)        # (B, F, C’, T’)
+        feat = self.global_pool(feat)           # (B, F, 1, 1)
+        feat = feat.view(feat.size(0), -1)      # (B, F)
+        feat = self.fc_drop(feat)
 
         # Update templates if training
         if self.training and y is not None:
             self._update_templates(x, y)
 
         if return_feat:
-            return logits, flat_feat
+            return None, feat
 
-        return logits
+        return None, feat

@@ -23,13 +23,13 @@ def set_seed(seed=777):
     torch.backends.cudnn.benchmark = False
 
 
-def print_model_size(model):
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"[Model Size]")
+def print_total_model_size(*models):
+    total_params = sum(p.numel() for m in models for p in m.parameters())
+    trainable_params = sum(p.numel() for m in models for p in m.parameters() if p.requires_grad)
+    print(f"[Total Model Size]")
     print(f"  Total Parameters     : {total_params:,}")
     print(f"  Trainable Parameters : {trainable_params:,}")
-    print(f"  Model Memory Estimate: {total_params * 4 / (1024**2):.2f} MB (float32)\n")
+    print(f"  Memory Estimate      : {total_params * 4 / (1024**2):.2f} MB\n")
 
 
 # ===== Train / Eval =====
@@ -145,6 +145,8 @@ def main(args):
                               num_heads=4,
                               proj_dim=n_classes).to(device)
 
+    print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+
     # Optimizer, loss, scheduler
     params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
              list(temp_branch.parameters()) + list(dual_attn.parameters())
@@ -152,8 +154,6 @@ def main(args):
     optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-
-    print_model_size(dual_attn)
 
     # Training loop
     for epoch in range(1, args.epochs + 1):
