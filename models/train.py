@@ -134,7 +134,7 @@ def main(args):
 
     # Model components
     eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-    stim_branch = StimulusBranch(input_dim=2, hidden_dim=args.d_query).to(device)
+    stim_branch = StimulusBranch(hidden_dim=args.d_query, n_harmonics=3).to(device)
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                  n_channels=n_channels, n_samples=n_samples,
                                  n_classes=n_classes,
@@ -180,7 +180,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_root", type=str, default="your data path")
+    parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)

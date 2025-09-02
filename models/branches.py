@@ -11,7 +11,7 @@ class EEGBranch(nn.Module):
     """
     EEG branch using EEGNet as encoder.
     Input : (B,1,C,T)
-    Output: (B,D_eeg) flattened EEG representation
+    Output : (B,D_eeg) flattened EEG representation
     """
     def __init__(self, chans, samples):
         super().__init__()
@@ -26,15 +26,29 @@ class EEGBranch(nn.Module):
 class StimulusBranch(nn.Module):
     """
     Stimulus branch using StimulusEncoder.
-    Input : (B, T, 2)
+    Input : (B, T, 2)    fundamental sin, cos
     Output: (B, D_stim)
     """
-    def __init__(self, input_dim=2, hidden_dim=128):
+    def __init__(self, hidden_dim=128, n_harmonics=3):
         super().__init__()
-        self.encoder = StimulusEncoder(input_dim, hidden_dim)
+        self.n_harmonics = n_harmonics
+        self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
 
     def forward(self, stim):
-        feat = self.encoder(stim)  # (B, D_stim)
+        """
+        stim: (B, T, 2)  fundamental sin/cos
+        Returns:
+            feat: (B, D_stim)
+        """
+        base_sin, base_cos = stim[..., 0], stim[..., 1]              # (B, T)
+
+        harmonics = []
+        for h in range(1, self.n_harmonics + 1):
+            harmonics.append(torch.sin(h * torch.arcsin(base_sin)))  # sin(hf)
+            harmonics.append(torch.cos(h * torch.arccos(base_cos)))  # cos(hf)
+
+        stim_harm = torch.stack(harmonics, dim=-1)  # (B, T, 2*n_harmonics)
+        feat = self.encoder(stim_harm)              # (B, hidden_dim) = (B, D_stim)
         return feat
 
 
@@ -42,8 +56,8 @@ class TemplateBranch(nn.Module):
     """
     Template branch using DTN.
     Input : (B, 1, C, T), labels(optional)
-    Output: (B, D_temp) latent representation from DTN
-    Note   : returns representation only (ignores logits)
+    Output : (B, D_temp) latent representation from DTN
+    Note : returns representation only (ignores logits)
     """
     def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
@@ -55,6 +69,6 @@ class TemplateBranch(nn.Module):
         self.proj = nn.Linear(32768, D_temp)
 
     def forward(self, x, y=None):
-        logits, feat = self.network(x, y, return_feat=True) # (B, D_flat)
+        logits, feat = self.network(x, y, return_feat=True) # (B, D_flat) = (B, C*H*W)
         feat = self.proj(feat)                              # (B, D_temp)
         return feat
