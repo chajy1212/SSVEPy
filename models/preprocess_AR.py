@@ -130,8 +130,8 @@ def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, T=2, pick_channel
 
 # ===================== main =====================
 if __name__ == "__main__":
-    BASE = "your base path"
-    SAVE = "your save path"
+    BASE = "/data/26764735"
+    SAVE = "/home/jycha/SSVEP/processed_npz"
     TASKS = ["MF", "LF", "SFSP", "SFDP", "DFSP", "DFDP", "DFDP1", "DFDP3", "DFDP5"]
     PICKS = ['PO1', 'PO2', 'P1', 'P5', 'PO7', 'CP2', 'PO8', 'P6', 'CP6', 'CP5', 'PO5', 'CP1',
              'PO4', 'P2', 'CP7', 'PO3', 'POZ', 'PO6', 'CP8', 'CP3', 'CPZ', 'CP4', 'M1', 'M2',

@@ -5,8 +5,8 @@ import torch.nn as nn
 class DualAttention(nn.Module):
     """
     Dual Attention module
-    - EEG -> Key/Value
-    - Stimulus & Template -> Query
+    - EEG → Key/Value
+    - Stimulus & Template → Query
     - Attention outputs (A_stim, A_temp) fused by concatenation + depthwise conv
     - Projection head for SSL (self-supervised learning)
     """
@@ -61,7 +61,7 @@ class DualAttention(nn.Module):
         """
         B = eeg_feat.size(0)
 
-        # EEG -> Key/Value
+        # EEG → Key/Value
         K = self.key(eeg_feat).unsqueeze(1)    # (B, 1, d_model)
         V = self.value(eeg_feat).unsqueeze(1)  # (B, 1, d_model)
 

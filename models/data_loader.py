@@ -2,9 +2,14 @@
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from sklearn.preprocessing import LabelEncoder
+
+from moabb.paradigms import SSVEP
+from moabb.datasets import Nakanishi2015
+from moabb.datasets import Lee2019_SSVEP
 
 
-class SSVEPDataset(Dataset):
+class ARDataset(Dataset):
     def __init__(self, npz_file, n_classes=None, T_stim=None):
         """
         Args:
@@ -49,3 +54,91 @@ class SSVEPDataset(Dataset):
         assert eeg.shape[-1] == stim.shape[0], "EEG segment length and stimulus length must match (2s)."
 
         return eeg, stim, class_label, task
+
+
+
+class Nakanishi2015Dataset(Dataset):
+    """
+    MOABB Nakanishi2015 SSVEP Dataset
+    Returns per sample:
+      - eeg:  (1, C, T)  torch.float32
+      - stim: (T, 2)     torch.float32  [sin, cos] @ stimulus frequency
+      - label: int       0..(n_classes-1)
+    """
+    def __init__(self, subjects=[1]):
+        dataset = Nakanishi2015()
+        paradigm = SSVEP()
+        X, labels, _ = paradigm.get_data(dataset=dataset, subjects=subjects)
+
+        self.epochs = X.astype(np.float32)
+        le = LabelEncoder()
+        self.labels = le.fit_transform(labels)
+        self.freqs = le.classes_.astype(float)
+        self.sfreq = 256.0
+
+        self.N, self.C, self.T = self.epochs.shape
+        self.n_classes = len(np.unique(self.labels))
+
+    def __len__(self):
+        return self.N
+
+    def __getitem__(self, idx):
+        eeg_np = self.epochs[idx]                  # (C, T)
+        label = int(self.labels[idx])              # class index
+        f = float(self.freqs[label])               # stimulus frequency
+
+        eeg = torch.tensor(eeg_np, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
+        t = np.arange(self.T, dtype=np.float32) / self.sfreq
+        stim_np = np.stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)], axis=-1)  # (T,2)
+        stim = torch.tensor(stim_np, dtype=torch.float32)
+
+        return eeg, stim, label
+
+
+class Lee2019Dataset(Dataset):
+    """
+    MOABB Lee2019 SSVEP Dataset
+    Loads EEG trials and corresponding labels.
+    Returns (EEG, Stimulus, Label).
+    """
+    def __init__(self, subjects=[1]):
+        super().__init__()
+        paradigm = SSVEP()
+        dataset = Lee2019_SSVEP()
+
+        # Load data
+        X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
+
+        # Encode labels
+        le = LabelEncoder()
+        y = le.fit_transform(labels)
+
+        self.X = torch.tensor(X, dtype=torch.float32)  # (N, C, T)
+        self.y = torch.tensor(y, dtype=torch.long)  # (N,)
+        self.freqs = le.classes_
+
+        # Channel, time, classes
+        self.C = self.X.shape[1]
+        self.T = self.X.shape[2]
+        self.n_classes = len(np.unique(self.y))
+
+        sfreq = 1000.0
+        t = np.arange(self.T) / sfreq
+
+        # Stimulus reference
+        self.stim_refs = []
+        for label in self.y:
+            f = float(self.freqs[label])
+            ref = np.stack([np.sin(2 * np.pi * f * t),
+                            np.cos(2 * np.pi * f * t)], axis=-1)
+            self.stim_refs.append(ref)
+        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        eeg = self.X[idx].unsqueeze(0)  # (1, C, T)
+        stim = self.stim_refs[idx]      # (T, 2)
+        label = self.y[idx]
+        return eeg, stim, label

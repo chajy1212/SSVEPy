@@ -7,8 +7,8 @@ class StimulusEncoder(nn.Module):
     """
     Stimulus Encoder
     - Encodes sinusoidal reference signals (sin, cos) into latent features.
-    - Input: (B, T, 2) -> B=batch, T=time length, 2=[sin, cos]
-    - Output: (B, D) -> flattened latent representation
+    - Input: (B, T, 2) → B=batch, T=time length, 2=[sin, cos]
+    - Output: (B, D) → flattened latent representation
     """
     def __init__(self, in_dim=2, hidden_dim=64):
         """

@@ -4,73 +4,48 @@ import torch.nn as nn
 
 
 class EEGNet(nn.Module):
-    def __init__(self, chans=64, samples=128,
-                 dropout_rate=0.5, kern_length=64,
-                 F1=8, D=2, F2=16):
-        """
-        Args:
-            chans (int): number of EEG channels
-            samples (int): number of time samples
-            dropout_rate (float): dropout probability
-            kern_length (int): temporal kernel length (usually sampling_rate/2)
-            F1 (int): number of temporal filters
-            D (int): depth multiplier
-            F2 (int): number of pointwise filters (default F1*D)
-        """
+    def __init__(self, chans, samples, dropoutRate=0.5, kernLength=64, F1=8, D=2, F2=16):
         super().__init__()
+        self.chans = chans
+        self.samples = samples
 
-        # ----- Block 1: temporal convolution + depthwise spatial convolution -----
-        self.block1 = nn.Sequential(
-            # Temporal Conv (1 x kernLength)
-            nn.Conv2d(1, F1, kernel_size=(1, kern_length),
-                      padding=(0, kern_length // 2), bias=False),
-            nn.BatchNorm2d(F1),
+        # ==== EEGNet layers ====
+        self.conv1 = nn.Conv2d(1, F1, (1, kernLength), padding=(0, kernLength // 2), bias=False)
+        self.bn1 = nn.BatchNorm2d(F1)
 
-            # Depthwise Conv across channels
-            nn.Conv2d(F1, F1 * D, kernel_size=(chans, 1),
-                      groups=F1, bias=False),
-            nn.BatchNorm2d(F1 * D),
-            nn.ELU(),
+        self.depthwiseConv = nn.Conv2d(F1, F1 * D, (chans, 1), groups=F1, bias=False)
+        self.bn2 = nn.BatchNorm2d(F1 * D)
+        self.elu = nn.ELU()
+        self.avgpool1 = nn.AvgPool2d((1, 4))
+        self.drop1 = nn.Dropout(dropoutRate)
 
-            # Temporal downsampling
-            nn.AvgPool2d(kernel_size=(1, 4)),
-            nn.Dropout(p=dropout_rate)
-        )
+        self.separableConv = nn.Conv2d(F1 * D, F2, (1, 16), padding=(0, 8), bias=False)
+        self.bn3 = nn.BatchNorm2d(F2)
+        self.avgpool2 = nn.AvgPool2d((1, 8))
+        self.drop2 = nn.Dropout(dropoutRate)
 
-        # ----- Block 2: separable convolution (depthwise + pointwise) -----
-        self.block2 = nn.Sequential(
-            # Depthwise Conv (1 x 16)
-            nn.Conv2d(F1 * D, F1 * D, kernel_size=(1, 16),
-                      padding=(0, 8), groups=F1 * D, bias=False),
-            # Pointwise Conv (1x1)
-            nn.Conv2d(F1 * D, F2, kernel_size=(1, 1), bias=False),
-            nn.BatchNorm2d(F2),
-            nn.ELU(),
+        # ==== 자동 out_dim 계산 ====
+        with torch.no_grad():
+            dummy = torch.zeros(1, 1, chans, samples)   # (B,1,C,T)
+            out = self.forward_features(dummy)          # feature extractor만 통과
+            self.out_dim = out.view(1, -1).shape[1]     # flatten dimension
 
-            # Further temporal downsampling
-            nn.AvgPool2d(kernel_size=(1, 8)),
-            nn.Dropout(p=dropout_rate)
-        )
-
-        # Flatten layer → output (B, D)
-        self.flatten = nn.Flatten()
-
-
-    def forward(self, x):
-        """
-        Args:
-            x: (B, 1, chans, samples)
-        Returns:
-            features: (B, D) flattened representation
-        """
-        x = self.block1(x)              # (B, F1*D, 1, T/4)
-        x = self.block2(x)              # (B, F2, 1, T/32)
-        x = self.flatten(x)             # (B, D)
+    def forward_features(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.depthwiseConv(x)
+        x = self.bn2(x)
+        x = self.elu(x)
+        x = self.avgpool1(x)
+        x = self.drop1(x)
+        x = self.separableConv(x)
+        x = self.bn3(x)
+        x = self.elu(x)
+        x = self.avgpool2(x)
+        x = self.drop2(x)
         return x
 
-
-class EEGNet_SSVEP(EEGNet):
-    def __init__(self, chans=8, samples=256,
-                 dropout_rate=0.5, kern_length=256,
-                 F1=96, D=1, F2=96):
-        super().__init__(chans, samples, dropout_rate, kern_length, F1, D, F2)
+    def forward(self, x):
+        x = self.forward_features(x)
+        x = x.view(x.size(0), -1)   # flatten
+        return x
