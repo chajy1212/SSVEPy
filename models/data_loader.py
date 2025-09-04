@@ -125,32 +125,22 @@ class Lee2019Dataset(Dataset):
         le = LabelEncoder()
         y = le.fit_transform(labels)
 
+        # Channel mapping (ch1 ~ ch62)
         mapping_lee2019 = {
-            "ch0": "Fp1", "ch1": "Fp2",
-            "ch2": "AF3", "ch3": "AF4",
-            "ch4": "F7", "ch5": "F3", "ch6": "Fz", "ch7": "F4", "ch8": "F8",
-            "ch9": "FC5", "ch10": "FC1", "ch11": "FC2", "ch12": "FC6",
-            "ch13": "T7", "ch14": "C3", "ch15": "Cz", "ch16": "C4", "ch17": "T8",
-            "ch18": "CP5", "ch19": "CP1", "ch20": "CP2", "ch21": "CP6",
-            "ch22": "P7", "ch23": "P3", "ch24": "Pz", "ch25": "P4", "ch26": "P8",
-            "ch27": "PO7", "ch28": "PO3", "ch29": "POz", "ch30": "PO4", "ch31": "PO8",
-            "ch32": "O1", "ch33": "Oz", "ch34": "O2",
-            # Extra posterior/temporal sites (from 62 montage)
-            "ch35": "F9", "ch36": "F10",
-            "ch37": "FT9", "ch38": "FT10",
-            "ch39": "TP9", "ch40": "TP10",
-            "ch41": "PO9", "ch42": "PO10",
-            # Additional electrodes (fill with standard 10-10 names)
-            "ch43": "AF7", "ch44": "AF8",
-            "ch45": "FC3", "ch46": "FC4",
-            "ch47": "C1", "ch48": "C2", "ch49": "C5", "ch50": "C6",
-            "ch51": "CP3", "ch52": "CP4",
-            "ch53": "P1", "ch54": "P2", "ch55": "P5", "ch56": "P6",
-            "ch57": "PO1", "ch58": "PO2",
-            "ch59": "AFz", "ch60": "CPz", "ch61": "Pz"  # duplicates tolerated
+            "ch1": "Fp1", "ch2": "Fp2", "ch3": "Fp7", "ch4": "F3", "ch5": "Fz", "ch6": "F4", "ch7": "F8",
+            "ch8": "FC5", "ch9": "FC1", "ch10": "FC2", "ch11": "FC6", "ch12": "T7", "ch13": "C3",
+            "ch14": "Cz", "ch15": "C4", "ch16": "T8", "ch17": "TP9", "ch18": "CP5", "ch19": "CP1",
+            "ch20": "CP2", "ch21": "CP6", "ch22": "TP10", "ch23": "P7", "ch24": "P3", "ch25": "Pz",
+            "ch26": "P4", "ch27": "P8", "ch28": "PO9", "ch29": "O1", "ch30": "Oz", "ch31": "O2",
+            "ch32": "PO10", "ch33": "FC3", "ch34": "FC4", "ch35": "C5", "ch36": "C1", "ch37": "C2",
+            "ch38": "C6", "ch39": "CP3", "ch40": "CPz", "ch41": "CP4", "ch42": "P1", "ch43": "P2",
+            "ch44": "POz", "ch45": "FT9", "ch46": "FTT9h", "ch47": "TPP7h", "ch48": "TP7", "ch49": "TPP9h",
+            "ch50": "FT10", "ch51": "FTT10h", "ch52": "TPP8h", "ch53": "TP8", "ch54": "TPP10h", "ch55": "F9",
+            "ch56": "F10", "ch57": "AF7", "ch58": "AF3", "ch59": "AF4", "ch60": "AF8", "ch61": "PO3", "ch62": "PO4"
         }
 
-        ch_names = [mapping_lee2019.get(f"ch{i}", f"ch{i}") for i in range(X.shape[1])]
+        ch_names = [mapping_lee2019.get(f"ch{i+1}", f"ch{i+1}") for i in range(X.shape[1])]
+
         info = mne.create_info(ch_names=ch_names, sfreq=1000, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
 

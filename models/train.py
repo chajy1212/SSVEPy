@@ -276,13 +276,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="Lee2019", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="all")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="O1,O2,Oz")
+    parser.add_argument("--pick_channels", type=str, default="O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
     args = parser.parse_args()
 
     if isinstance(args.pick_channels, str):
