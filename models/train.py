@@ -189,11 +189,9 @@ def main(args):
 
     elif args.dataset == "Lee2019":
         subjects = parse_subjects(args.subjects, "Lee2019")
-        dataset = Lee2019Dataset(subjects=subjects)
-        N = len(dataset)
-        N_train = int(0.8 * N)
-        train_dataset, test_dataset = random_split(dataset, [N_train, N - N_train])
-        n_channels, n_samples, n_classes = dataset.C, dataset.T, dataset.n_classes
+        train_dataset = Lee2019Dataset(subjects=subjects, train=True)  # session1
+        test_dataset = Lee2019Dataset(subjects=subjects, train=False)  # session2
+        n_channels, n_samples, n_classes = train_dataset.C, train_dataset.T, train_dataset.n_classes
         with_task = False
 
     else:

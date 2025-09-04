@@ -98,39 +98,40 @@ class Nakanishi2015Dataset(Dataset):
 class Lee2019Dataset(Dataset):
     """
     MOABB Lee2019 SSVEP Dataset
-    Loads EEG trials and corresponding labels.
-    Returns (EEG, Stimulus, Label).
+    session1 = train, session2 = test
     """
-    def __init__(self, subjects=[1]):
+    def __init__(self, subjects=[1], train=True):
         super().__init__()
         paradigm = SSVEP()
-        dataset = Lee2019_SSVEP()
 
-        # Load data
+        # session1 → train, session2 → test
+        sessions = [1] if train else [2]
+        dataset = Lee2019_SSVEP(sessions=sessions)
+
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
         # Encode labels
         le = LabelEncoder()
         y = le.fit_transform(labels)
 
-        self.X = torch.tensor(X, dtype=torch.float32)  # (N, C, T)
-        self.y = torch.tensor(y, dtype=torch.long)  # (N,)
+        self.X = torch.tensor(X, dtype=torch.float32)       # (N,C,T)
+        self.y = torch.tensor(y, dtype=torch.long)          # (N,)
         self.freqs = le.classes_
 
-        # Channel, time, classes
+        # Channel/time/class info
         self.C = self.X.shape[1]
         self.T = self.X.shape[2]
         self.n_classes = len(np.unique(self.y))
 
-        sfreq = 1000.0
+        # Sampling frequency from MNE
+        sfreq = meta[0][0].info["sfreq"]
         t = np.arange(self.T) / sfreq
 
-        # Stimulus reference
+        # Sin/cos reference per sample
         self.stim_refs = []
         for label in self.y:
             f = float(self.freqs[label])
-            ref = np.stack([np.sin(2 * np.pi * f * t),
-                            np.cos(2 * np.pi * f * t)], axis=-1)
+            ref = np.stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)], axis=-1)
             self.stim_refs.append(ref)
         self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)
 
@@ -138,7 +139,7 @@ class Lee2019Dataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, idx):
-        eeg = self.X[idx].unsqueeze(0)  # (1, C, T)
-        stim = self.stim_refs[idx]      # (T, 2)
+        eeg = self.X[idx].unsqueeze(0)  # (1,C,T)
+        stim = self.stim_refs[idx]      # (T,2)
         label = self.y[idx]
         return eeg, stim, label
