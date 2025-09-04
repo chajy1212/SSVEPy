@@ -55,68 +55,63 @@ class ARDataset(Dataset):
         return eeg, stim, class_label, task
 
 
-
 class Nakanishi2015Dataset(Dataset):
-    """
-    MOABB Nakanishi2015 SSVEP Dataset
-    Returns per sample:
-      - eeg:  (1, C, T)
-      - stim: (T, 2)
-      - label: int
-    """
-    def __init__(self, subjects=[1]):
+    def __init__(self, subjects=[1], pick_channels="all"):
         dataset = Nakanishi2015()
         paradigm = SSVEP()
-        X, labels, _ = paradigm.get_data(dataset=dataset, subjects=subjects)
+        X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
-        # Original data
-        self.epochs = X.astype(np.float32)
+        # Label encoding
         le = LabelEncoder()
         self.labels = le.fit_transform(labels)
         self.freqs = le.classes_.astype(float)
         self.sfreq = 256.0
 
-        self.N, self.C, self.T = self.epochs.shape
-        self.n_classes = len(np.unique(self.labels))
+        # True channel names from the original paper
+        ch_names = ["PO7", "PO3", "POz", "PO4", "PO8", "O1", "Oz", "O2"]
+
+        # Build MNE object
+        info = mne.create_info(ch_names=ch_names, sfreq=self.sfreq, ch_types="eeg")
+        raw = mne.EpochsArray(X.astype(np.float32), info)
+
+        # Pick channels if requested
+        if pick_channels != "all":
+            raw.pick(pick_channels)
 
         # Bandpass filter
-        info = mne.create_info(ch_names=[f"ch{i}" for i in range(self.C)],
-                               sfreq=self.sfreq, ch_types="eeg")
-        raw = mne.EpochsArray(self.epochs, info)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
 
-        self.epochs = raw.get_data().astype(np.float32)
+        # Final data
+        self.epochs = raw.get_data().astype(np.float32)  # (N, C, T)
+        self.N, self.C, self.T = self.epochs.shape
+        self.n_classes = len(np.unique(self.labels))
+        self.ch_names = raw.info["ch_names"]
 
     def __len__(self):
         return self.N
 
     def __getitem__(self, idx):
-        eeg_np = self.epochs[idx]                  # (C, T)
-        label = int(self.labels[idx])              # class index
-        f = float(self.freqs[label])               # stimulus frequency
+        eeg_np = self.epochs[idx]  # (C, T)
+        label = int(self.labels[idx])
+        f = float(self.freqs[label])
 
         eeg = torch.tensor(eeg_np, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
 
-        # Generate stimulus reference
+        # Reference signals
         t = np.arange(self.T, dtype=np.float32) / self.sfreq
-        stim_np = np.stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)], axis=-1)  # (T,2)
+        stim_np = np.stack([np.sin(2 * np.pi * f * t),
+                            np.cos(2 * np.pi * f * t)], axis=-1)  # (T, 2)
         stim = torch.tensor(stim_np, dtype=torch.float32)
 
         return eeg, stim, label
 
 
 class Lee2019Dataset(Dataset):
-    """
-    MOABB Lee2019 SSVEP Dataset
-    Session 0 → train, Session 1 → test
-    Returns (EEG, Stimulus, Label).
-    """
-    def __init__(self, subjects=[1], train=True, rfreq=250):
+    def __init__(self, subjects=[1], train=True, rfreq=250, pick_channels="all"):
         super().__init__()
         paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
 
-        # Load data
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
         if train:
@@ -127,44 +122,67 @@ class Lee2019Dataset(Dataset):
         X = X[session_mask]
         labels = labels[session_mask]
 
-        # Encode labels
         le = LabelEncoder()
         y = le.fit_transform(labels)
 
-        # Convert to tensors
-        self.X = torch.tensor(X, dtype=torch.float32)       # (N, C, T)
-        self.y = torch.tensor(y, dtype=torch.long)          # (N,)
-        self.freqs = le.classes_                            # original frequency labels
+        mapping_lee2019 = {
+            "ch0": "Fp1", "ch1": "Fp2",
+            "ch2": "AF3", "ch3": "AF4",
+            "ch4": "F7", "ch5": "F3", "ch6": "Fz", "ch7": "F4", "ch8": "F8",
+            "ch9": "FC5", "ch10": "FC1", "ch11": "FC2", "ch12": "FC6",
+            "ch13": "T7", "ch14": "C3", "ch15": "Cz", "ch16": "C4", "ch17": "T8",
+            "ch18": "CP5", "ch19": "CP1", "ch20": "CP2", "ch21": "CP6",
+            "ch22": "P7", "ch23": "P3", "ch24": "Pz", "ch25": "P4", "ch26": "P8",
+            "ch27": "PO7", "ch28": "PO3", "ch29": "POz", "ch30": "PO4", "ch31": "PO8",
+            "ch32": "O1", "ch33": "Oz", "ch34": "O2",
+            # Extra posterior/temporal sites (from 62 montage)
+            "ch35": "F9", "ch36": "F10",
+            "ch37": "FT9", "ch38": "FT10",
+            "ch39": "TP9", "ch40": "TP10",
+            "ch41": "PO9", "ch42": "PO10",
+            # Additional electrodes (fill with standard 10-10 names)
+            "ch43": "AF7", "ch44": "AF8",
+            "ch45": "FC3", "ch46": "FC4",
+            "ch47": "C1", "ch48": "C2", "ch49": "C5", "ch50": "C6",
+            "ch51": "CP3", "ch52": "CP4",
+            "ch53": "P1", "ch54": "P2", "ch55": "P5", "ch56": "P6",
+            "ch57": "PO1", "ch58": "PO2",
+            "ch59": "AFz", "ch60": "CPz", "ch61": "Pz"  # duplicates tolerated
+        }
 
-        # Basic info
-        self.C = self.X.shape[1]
-        self.T = self.X.shape[2]
-        self.n_classes = len(np.unique(self.y))
+        ch_names = [mapping_lee2019.get(f"ch{i}", f"ch{i}") for i in range(X.shape[1])]
+        info = mne.create_info(ch_names=ch_names, sfreq=1000, ch_types="eeg")
+        raw = mne.EpochsArray(X.astype(np.float32), info)
 
-        # Resample + bandpass filter
-        info = mne.create_info(ch_names=[f"ch{i}" for i in range(self.C)],
-                               sfreq=1000, ch_types="eeg")          # original fs=1000 Hz
-        raw = mne.EpochsArray(self.X.numpy(), info)
-        raw.resample(rfreq)                                         # downsample to 250 Hz
+        if pick_channels != "all":
+            raw.pick(pick_channels)
+
+        raw.resample(rfreq)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
 
-        self.X = torch.tensor(raw.get_data(), dtype=torch.float32)  # (N, C, T_resampled)
-        self.T = self.X.shape[2]
+        self.X = torch.tensor(raw.get_data(), dtype=torch.float32)
+        self.y = torch.tensor(y, dtype=torch.long)
+        self.freqs = le.classes_
 
-        # Generate stimulus references
+        self.N, self.C, self.T = self.X.shape
+        self.n_classes = len(np.unique(self.y))
+        self.ch_names = raw.info["ch_names"]
+
+        # Reference signals
         self.stim_refs = []
         t = np.arange(self.T) / rfreq
         for label in self.y:
             f = float(self.freqs[label])
-            ref = np.stack([np.sin(2 * np.pi * f * t), np.cos(2 * np.pi * f * t)], axis=-1)
+            ref = np.stack([np.sin(2 * np.pi * f * t),
+                            np.cos(2 * np.pi * f * t)], axis=-1)
             self.stim_refs.append(ref)
-        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)  # (N, T, 2)
+        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, idx):
         eeg = self.X[idx].unsqueeze(0)  # (1, C, T)
-        stim = self.stim_refs[idx]      # (T, 2)
+        stim = self.stim_refs[idx]
         label = self.y[idx]
         return eeg, stim, label

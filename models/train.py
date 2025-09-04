@@ -31,6 +31,23 @@ def print_total_model_size(*models):
     print(f"  Memory Estimate      : {total_params * 4 / (1024**2):.2f} MB\n")
 
 
+# ===== ITR function =====
+def compute_itr(acc, n_classes, trial_time):
+    """
+    Compute Information Transfer Rate (ITR) in bits/min.
+    acc: accuracy (0~1)
+    n_classes: number of target classes
+    trial_time: trial length in seconds
+    """
+    if acc <= 0 or n_classes <= 1:
+        return 0.0
+    itr = (np.log2(n_classes) +
+           acc * np.log2(acc) +
+           (1 - acc) * np.log2((1 - acc) / (n_classes - 1)))
+    itr = 60.0 / trial_time * itr
+    return itr
+
+
 # ===== Subject parser =====
 def parse_subjects(subjects_arg, dataset_name=""):
     """
@@ -46,7 +63,6 @@ def parse_subjects(subjects_arg, dataset_name=""):
             subjects = list(range(1, 55))  # 1 ~ 54
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
-        print(f"[INFO] {dataset_name} subjects selected: {subjects}")
         return subjects
 
     subjects = []
@@ -59,8 +75,6 @@ def parse_subjects(subjects_arg, dataset_name=""):
             subjects.extend(range(int(start), int(end) + 1))
         else:
             subjects.append(int(part))
-
-    print(f"[INFO] {dataset_name} subjects selected: {subjects}")
     return subjects
 
 
@@ -108,7 +122,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, criterion, device, with_task=False):
+             dataloader, criterion, device, with_task=False,
+             n_classes=None, trial_time=None):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -130,16 +145,13 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         temp_feat = temp_branch(eeg, label)
         logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        # Loss
         loss = criterion(logits, label)
         total_loss += loss.item()
 
-        # Accuracy
         _, pred = logits.max(1)
         total += label.size(0)
         correct += pred.eq(label).sum().item()
 
-        # Per-task accuracy
         if with_task:
             for t, p, l in zip(task, pred.cpu(), label.cpu()):
                 t = str(t)
@@ -152,7 +164,12 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     avg_loss = total_loss / len(dataloader)
     task_acc = {t: task_correct[t] / task_total[t] for t in task_total} if with_task else None
 
-    return avg_loss, acc, task_acc
+    # Compute ITR if info available
+    itr = None
+    if n_classes is not None and trial_time is not None:
+        itr = compute_itr(acc, n_classes, trial_time)
+
+    return avg_loss, acc, task_acc, itr
 
 
 # ===== Main =====
@@ -160,7 +177,6 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Dataset selection
     if args.dataset == "AR":
         all_train_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-01.npz")))
         all_test_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-02.npz")))
@@ -175,32 +191,43 @@ def main(args):
         train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
         test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
         n_channels, n_samples, n_classes = train_dataset.datasets[0].C, train_dataset.datasets[0].T, \
-            train_dataset.datasets[0].n_classes
+                                           train_dataset.datasets[0].n_classes
+        ch_names = train_dataset.datasets[0].ch_names
+        trial_time = n_samples / train_dataset.datasets[0].sfreq
         with_task = True
 
     elif args.dataset == "Nakanishi2015":
         subjects = parse_subjects(args.subjects, "Nakanishi2015")
-        dataset = Nakanishi2015Dataset(subjects=subjects)
+        dataset = Nakanishi2015Dataset(subjects=subjects, pick_channels=args.pick_channels)
         N = len(dataset)
         N_train = int(0.8 * N)
         train_dataset, test_dataset = random_split(dataset, [N_train, N - N_train])
         n_channels, n_samples, n_classes = dataset.C, dataset.T, dataset.n_classes
+        ch_names = dataset.ch_names
+        trial_time = n_samples / dataset.sfreq
         with_task = False
 
     elif args.dataset == "Lee2019":
         subjects = parse_subjects(args.subjects, "Lee2019")
-        train_dataset = Lee2019Dataset(subjects=subjects, train=True)  # session 0
-        test_dataset = Lee2019Dataset(subjects=subjects, train=False)  # session 1
+        train_dataset = Lee2019Dataset(subjects=subjects, train=True, pick_channels=args.pick_channels)
+        test_dataset = Lee2019Dataset(subjects=subjects, train=False, pick_channels=args.pick_channels)
         n_channels, n_samples, n_classes = train_dataset.C, train_dataset.T, train_dataset.n_classes
+        ch_names = train_dataset.ch_names
+        trial_time = n_samples / 250.0  # since we resampled to 250 Hz
         with_task = False
 
     else:
         raise ValueError("Unsupported dataset")
 
+    print(f"[INFO] Dataset: {args.dataset}")
+    print(f"[INFO] Subjects: {args.subjects}")
+    print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
+    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s\n")
+
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    # Model
     eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
     stim_branch = StimulusBranch(hidden_dim=args.d_query, n_harmonics=3).to(device)
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
@@ -216,7 +243,6 @@ def main(args):
 
     print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-    # Optimizer, loss, scheduler
     params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
              list(temp_branch.parameters()) + list(dual_attn.parameters())
 
@@ -224,18 +250,22 @@ def main(args):
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    # Training loop
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                                                 train_loader, optimizer, criterion, device, with_task)
-        test_loss, test_acc, task_acc = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                 test_loader, criterion, device, with_task)
+        test_loss, test_acc, task_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
+                                                      test_loader, criterion, device, with_task,
+                                                      n_classes=n_classes, trial_time=trial_time)
 
         scheduler.step()
 
         print(f"\n[Epoch {epoch:03d}] "
               f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
-              f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}")
+              f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}", end="")
+        if itr is not None:
+            print(f" | ITR: {itr:.2f} bits/min")
+        else:
+            print()
 
         if task_acc is not None:
             for t, acc in task_acc.items():
@@ -246,12 +276,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="Lee2019", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--pick_channels", type=str, default="O1,O2,Oz")
     args = parser.parse_args()
+
+    if isinstance(args.pick_channels, str):
+        if args.pick_channels.lower() == "all":
+            args.pick_channels = "all"
+        else:
+            cleaned = args.pick_channels.strip("[]")
+            args.pick_channels = [ch.strip().strip("'").strip('"') for ch in cleaned.split(",")]
 
     main(args)
