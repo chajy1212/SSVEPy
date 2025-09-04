@@ -98,48 +98,65 @@ class Nakanishi2015Dataset(Dataset):
 class Lee2019Dataset(Dataset):
     """
     MOABB Lee2019 SSVEP Dataset
-    session1 = train, session2 = test
+    Session0 → train, Session1 → test
+    Returns (EEG, Stimulus, Label).
     """
-    def __init__(self, subjects=[1], train=True):
+    def __init__(self, subjects=[1], train=True, rfreq=250):
         super().__init__()
+        # Paradigm: SSVEP
         paradigm = SSVEP()
+        dataset = Lee2019_SSVEP()
 
-        # session1 → train, session2 → test
-        sessions = [1] if train else [2]
-        dataset = Lee2019_SSVEP(sessions=sessions)
-
+        # Load data
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
-        # Encode labels
+        if train:
+            session_mask = (meta['session'] == "0")
+        else:
+            session_mask = (meta['session'] == "1")
+
+        X = X[session_mask]
+        labels = labels[session_mask]
+
+        # Encode labels (string → int)
         le = LabelEncoder()
         y = le.fit_transform(labels)
 
-        self.X = torch.tensor(X, dtype=torch.float32)       # (N,C,T)
+        # Convert to torch tensors
+        self.X = torch.tensor(X, dtype=torch.float32)       # (N, C, T)
         self.y = torch.tensor(y, dtype=torch.long)          # (N,)
-        self.freqs = le.classes_
+        self.freqs = le.classes_                            # original frequency labels
 
-        # Channel/time/class info
+        # Channel, time, classes
         self.C = self.X.shape[1]
         self.T = self.X.shape[2]
         self.n_classes = len(np.unique(self.y))
 
-        # Sampling frequency from MNE
-        sfreq = meta[0][0].info["sfreq"]
-        t = np.arange(self.T) / sfreq
+        # Resample + filter (as in Colab reference)
+        import mne
+        info = mne.create_info(ch_names=[f"ch{i}" for i in range(self.C)],
+                               sfreq=1000, ch_types="eeg")          # original fs=1000 Hz
+        raw = mne.EpochsArray(self.X.numpy(), info)
+        raw.resample(rfreq)                                         # downsample to 250 Hz
+        raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
 
-        # Sin/cos reference per sample
+        self.X = torch.tensor(raw.get_data(), dtype=torch.float32)  # (N, C, T_resampled)
+        self.T = self.X.shape[2]
+
+        # Stimulus references
         self.stim_refs = []
+        t = np.arange(self.T) / rfreq
         for label in self.y:
             f = float(self.freqs[label])
-            ref = np.stack([np.sin(2*np.pi*f*t), np.cos(2*np.pi*f*t)], axis=-1)
+            ref = np.stack([np.sin(2 * np.pi * f * t), np.cos(2 * np.pi * f * t)], axis=-1)
             self.stim_refs.append(ref)
-        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)
+        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)  # (N, T, 2)
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, idx):
-        eeg = self.X[idx].unsqueeze(0)  # (1,C,T)
-        stim = self.stim_refs[idx]      # (T,2)
+        eeg = self.X[idx].unsqueeze(0)  # (1, C, T)
+        stim = self.stim_refs[idx]      # (T, 2)
         label = self.y[idx]
         return eeg, stim, label

@@ -59,13 +59,11 @@ class DualAttention(nn.Module):
             A_stim    : (B, d_model) stimulus attention output
             A_temp    : (B, d_model) template attention output
         """
-        B = eeg_feat.size(0)
-
         # EEG → Key/Value
-        K = self.key(eeg_feat).unsqueeze(1)    # (B, 1, d_model)
+        K = self.key(eeg_feat).unsqueeze(1)  # (B, 1, d_model)
         V = self.value(eeg_feat).unsqueeze(1)  # (B, 1, d_model)
 
-        # Queries
+        # Stimulus / Template → Query
         Q_stim = self.query_stim(stim_feat).unsqueeze(1)  # (B, 1, d_model)
         Q_temp = self.query_temp(temp_feat).unsqueeze(1)  # (B, 1, d_model)
 
@@ -73,13 +71,13 @@ class DualAttention(nn.Module):
         A_stim, _ = self.attn(Q_stim, K, V)  # (B, 1, d_model)
         A_temp, _ = self.attn(Q_temp, K, V)  # (B, 1, d_model)
 
-        # Fusion: concat along channel → conv
-        A_cat = torch.cat([A_stim, A_temp], dim=-1)      # (B, 1, 2*d_model)
-        A_cat = A_cat.permute(0, 2, 1)                          # (B, 2*d_model, 1)
-        A_fused = self.fusion_conv(A_cat)                       # (B, d_model, 1)
-        A_fused = A_fused.squeeze(-1)                           # (B, d_model)
+        # Fusion: concat along channel → depthwise + pointwise conv
+        A_cat = torch.cat([A_stim, A_temp], dim=-1)  # (B, 1, 2*d_model)
+        A_cat = A_cat.permute(0, 2, 1)  # (B, 2*d_model, 1)
+        A_fused = self.fusion_conv(A_cat)  # (B, d_model, 1)
+        A_fused = A_fused.squeeze(-1)  # (B, d_model)
 
         # Projection head
-        proj = self.proj_head(A_fused)                          # (B, proj_dim)
+        proj = self.proj_head(A_fused)  # (B, proj_dim)
 
         return proj, A_stim.squeeze(1), A_temp.squeeze(1)

@@ -9,7 +9,6 @@ class EEGNet(nn.Module):
         self.chans = chans
         self.samples = samples
 
-        # ==== EEGNet layers ====
         self.conv1 = nn.Conv2d(1, F1, (1, kernLength), padding=(0, kernLength // 2), bias=False)
         self.bn1 = nn.BatchNorm2d(F1)
 
@@ -24,11 +23,10 @@ class EEGNet(nn.Module):
         self.avgpool2 = nn.AvgPool2d((1, 8))
         self.drop2 = nn.Dropout(dropoutRate)
 
-        # ==== 자동 out_dim 계산 ====
         with torch.no_grad():
             dummy = torch.zeros(1, 1, chans, samples)   # (B,1,C,T)
-            out = self.forward_features(dummy)          # feature extractor만 통과
-            self.out_dim = out.view(1, -1).shape[1]     # flatten dimension
+            out = self.forward_features(dummy)
+            self.out_dim = out.view(1, -1).shape[1]
 
     def forward_features(self, x):
         x = self.conv1(x)

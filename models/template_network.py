@@ -129,7 +129,7 @@ class DTN(nn.Module):
     def forward(self, x, y=None, return_feat=True):
         """
         x: (B, 1, C, T)
-        return_feat=True → (logits=None, feat) 반환
+        return_feat=True → (logits=None, feat)
         """
         x = self.instance_norm(x)
         feat = self.feature_extractor(x)        # (B, F, C’, T’)

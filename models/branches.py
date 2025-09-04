@@ -16,7 +16,7 @@ class EEGBranch(nn.Module):
     def __init__(self, chans, samples):
         super().__init__()
         self.encoder = EEGNet(chans=chans, samples=samples)
-        self.out_dim = self.encoder.out_dim  # 자동 계산된 dimension
+        self.out_dim = self.encoder.out_dim
 
     def forward(self, x):
         feat = self.encoder(x)  # (B, out_dim)

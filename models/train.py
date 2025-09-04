@@ -189,8 +189,8 @@ def main(args):
 
     elif args.dataset == "Lee2019":
         subjects = parse_subjects(args.subjects, "Lee2019")
-        train_dataset = Lee2019Dataset(subjects=subjects, train=True)  # session1
-        test_dataset = Lee2019Dataset(subjects=subjects, train=False)  # session2
+        train_dataset = Lee2019Dataset(subjects=subjects, train=True)  # session 0
+        test_dataset = Lee2019Dataset(subjects=subjects, train=False)  # session 1
         n_channels, n_samples, n_classes = train_dataset.C, train_dataset.T, train_dataset.n_classes
         with_task = False
 
@@ -246,7 +246,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="Lee2019", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="1-54", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
