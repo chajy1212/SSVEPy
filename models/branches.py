@@ -3,11 +3,12 @@ import torch
 import torch.nn as nn
 
 from EEGNet import EEGNet
+from ATCNet import ATCNet
 from template_network import DTN
 from stimulus import StimulusEncoder
 
 
-class EEGBranch(nn.Module):
+class EEGBranch_EEGNet(nn.Module):
     """
     EEG branch using EEGNet as encoder.
     Input : (B, 1, C, T)
@@ -17,6 +18,33 @@ class EEGBranch(nn.Module):
         super().__init__()
         self.encoder = EEGNet(chans=chans, samples=samples)
         self.out_dim = self.encoder.out_dim
+
+    def forward(self, x):
+        feat = self.encoder(x)  # (B, out_dim)
+        return feat
+
+
+class EEGBranch_ATCNet(nn.Module):
+    """
+    EEG branch using ATCNet as encoder.
+    Input : (B, 1, C, T)
+    Output : (B, D_eeg) flattened EEG representation
+    """
+    def __init__(self, chans, samples,
+                 F1=16, D=2, kernel_size=64, pool_size=8, dropout=0.3,
+                 n_windows=5, d_model=32, n_heads=4,
+                 tcn_depth=2, tcn_kernel_size=4, tcn_filters=32, tcn_dropout=0.3):
+        super().__init__()
+        self.encoder = ATCNet(chans=chans, samples=samples,
+                              F1=F1, D=D, kernel_size=kernel_size,
+                              pool_size=pool_size, dropout=dropout,
+                              n_windows=n_windows, d_model=d_model,
+                              n_heads=n_heads,
+                              tcn_depth=tcn_depth,
+                              tcn_kernel_size=tcn_kernel_size,
+                              tcn_filters=tcn_filters,
+                              tcn_dropout=tcn_dropout)
+        self.out_dim = tcn_filters * n_windows
 
     def forward(self, x):
         feat = self.encoder(x)  # (B, out_dim)
