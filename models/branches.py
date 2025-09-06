@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from EEGNet import EEGNet
 from ATCNet import ATCNet
+from ShallowNet import ShallowNet
 from template_network import DTN
 from stimulus import StimulusEncoder
 
@@ -48,6 +49,22 @@ class EEGBranch_ATCNet(nn.Module):
 
     def forward(self, x):
         feat = self.encoder(x)  # (B, out_dim)
+        return feat
+
+
+class EEGBranch_ShallowNet(nn.Module):
+    """
+    EEG branch using ShallowNet as encoder.
+    Input : (B, 1, C, T)
+    Output : (B, D_eeg)
+    """
+    def __init__(self, chans, samples):
+        super().__init__()
+        self.encoder = ShallowNet(chans=chans, samples=samples)
+        self.out_dim = self.encoder.out_dim
+
+    def forward(self, x):
+        feat = self.encoder(x)
         return feat
 
 

@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, ConcatDataset, random_split
 
 from dual_attention import DualAttention
 from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
-from branches import EEGBranch_EEGNet, EEGBranch_ATCNet, StimulusBranch, TemplateBranch
+from branches import EEGBranch_EEGNet, EEGBranch_ATCNet, EEGBranch_ShallowNet, StimulusBranch, TemplateBranch
 
 
 # ===== Reproducibility =====
@@ -86,7 +86,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     temp_branch.train()
     dual_attn.train()
 
-    total_loss, total_correct, total_samples = 0.0, 0, 0
+    all_preds, all_labels = [], []
+    total_loss = 0.0
 
     for batch in dataloader:
         if with_task:
@@ -94,25 +95,33 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         else:
             eeg, stim, label = batch
         eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
-        batch_size = label.size(0)
 
         optimizer.zero_grad()
-        eeg_feat = eeg_branch(eeg)
-        stim_feat = stim_branch(stim)
-        temp_feat = temp_branch(eeg, label)
-        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
+        # Forward
+        eeg_feat = eeg_branch(eeg)                                  # (B, D_eeg)
+        stim_feat = stim_branch(stim)                               # (B, D_query)
+        temp_feat = temp_branch(eeg, label)                         # (B, D_query)
+        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
+
+        # Loss + backward
         loss = criterion(logits, label)
         loss.backward()
         optimizer.step()
 
-        # 가중합
+        batch_size = label.size(0)
         total_loss += loss.item() * batch_size
-        total_correct += (logits.argmax(dim=1) == label).sum().item()
-        total_samples += batch_size
 
-    avg_loss = total_loss / total_samples
-    acc = total_correct / total_samples
+        _, pred = logits.max(1)
+        all_preds.append(pred.detach().cpu())
+        all_labels.append(label.detach().cpu())
+
+    all_preds = torch.cat(all_preds)
+    all_labels = torch.cat(all_labels)
+
+    avg_loss = total_loss / len(all_labels)
+    acc = (all_preds == all_labels).float().mean().item()
+
     return avg_loss, acc
 
 
@@ -125,7 +134,8 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     temp_branch.eval()
     dual_attn.eval()
 
-    total_loss, total_correct, total_samples = 0.0, 0, 0
+    all_preds, all_labels = [], []
+    total_loss = 0.0
     task_correct, task_total = {}, {}
 
     for batch in dataloader:
@@ -135,7 +145,6 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
             eeg, stim, label = batch
             task = None
         eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
-        batch_size = label.size(0)
 
         eeg_feat = eeg_branch(eeg)
         stim_feat = stim_branch(stim)
@@ -143,23 +152,29 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = criterion(logits, label)
+        total_loss += loss.item() * label.size(0)
 
-        total_loss += loss.item() * batch_size
-        total_correct += (logits.argmax(dim=1) == label).sum().item()
-        total_samples += batch_size
+        _, pred = logits.max(1)
+        all_preds.append(pred.cpu())
+        all_labels.append(label.cpu())
 
         if with_task:
-            for t, p, l in zip(task, logits.argmax(dim=1).cpu(), label.cpu()):
+            for t, p, l in zip(task, pred.cpu(), label.cpu()):
                 t = str(t)
                 task_correct.setdefault(t, 0)
                 task_total.setdefault(t, 0)
                 task_correct[t] += int(p == l)
                 task_total[t] += 1
 
-    avg_loss = total_loss / total_samples
-    acc = total_correct / total_samples
+    all_preds = torch.cat(all_preds)
+    all_labels = torch.cat(all_labels)
+
+    avg_loss = total_loss / len(all_labels)
+    acc = (all_preds == all_labels).float().mean().item()
+
     task_acc = {t: task_correct[t] / task_total[t] for t in task_total} if with_task else None
 
+    # ITR
     itr = None
     if n_classes is not None and trial_time is not None:
         itr = compute_itr(acc, n_classes, trial_time)
@@ -227,6 +242,8 @@ def main(args):
         eeg_branch = EEGBranch_EEGNet(chans=n_channels, samples=n_samples).to(device)
     elif args.encoder.lower() == "atcnet":
         eeg_branch = EEGBranch_ATCNet(chans=n_channels, samples=n_samples).to(device)
+    elif args.encoder.lower() == "shallownet":
+        eeg_branch = EEGBranch_ShallowNet(chans=n_channels, samples=n_samples).to(device)
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
 
@@ -275,7 +292,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
+    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -283,8 +300,8 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
-    parser.add_argument("--encoder", type=str, default="ATCNet", choices=["EEGNet", "ATCNet"])
+    parser.add_argument("--pick_channels", type=str, default="all", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--encoder", type=str, default="ShallowNet", choices=["EEGNet", "ATCNet", "ShallowNet"])
     args = parser.parse_args()
 
     # Parse channel selection
