@@ -10,7 +10,13 @@ from torch.utils.data import DataLoader, ConcatDataset, random_split
 
 from dual_attention import DualAttention
 from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
-from branches import EEGBranch_EEGNet, EEGBranch_ATCNet, EEGBranch_ShallowNet, StimulusBranch, TemplateBranch
+from branches import (
+    EEGBranch_EEGNet,
+    EEGBranch_ATCNet,
+    EEGBranch_ShallowNet,
+    StimulusBranch,
+    TemplateBranch
+)
 
 
 # ===== Reproducibility =====
@@ -80,7 +86,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, criterion, device, with_task=False):
+                    dataloader, optimizer, criterion, device,
+                    with_task=False):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -201,7 +208,7 @@ def main(args):
         train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
         test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
         n_channels, n_samples, n_classes = train_dataset.datasets[0].C, train_dataset.datasets[0].T, \
-                                           train_dataset.datasets[0].n_classes
+            train_dataset.datasets[0].n_classes
         ch_names = train_dataset.datasets[0].ch_names
         trial_time = n_samples / train_dataset.datasets[0].sfreq
         with_task = True
@@ -238,11 +245,11 @@ def main(args):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    if args.encoder.lower() == "eegnet":
+    if args.encoder == "EEGNet":
         eeg_branch = EEGBranch_EEGNet(chans=n_channels, samples=n_samples).to(device)
-    elif args.encoder.lower() == "atcnet":
+    elif args.encoder == "ATCNet":
         eeg_branch = EEGBranch_ATCNet(chans=n_channels, samples=n_samples).to(device)
-    elif args.encoder.lower() == "shallownet":
+    elif args.encoder == "ShallowNet":
         eeg_branch = EEGBranch_ShallowNet(chans=n_channels, samples=n_samples).to(device)
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
@@ -272,7 +279,7 @@ def main(args):
         train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                                                 train_loader, optimizer, criterion, device, with_task)
         test_loss, test_acc, task_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                      test_loader, criterion, device, with_task,
+                                                      test_loader, criterion, device,with_task,
                                                       n_classes=n_classes, trial_time=trial_time)
 
         scheduler.step()
