@@ -4,6 +4,7 @@ import torch.nn as nn
 
 from EEGNet import EEGNet
 from ATCNet import ATCNet
+from FBCNet import FBCNet
 from ShallowNet import ShallowNet
 from template_network import DTN
 from stimulus import StimulusEncoder
@@ -58,13 +59,35 @@ class EEGBranch_ShallowNet(nn.Module):
     Input : (B, 1, C, T)
     Output : (B, D_eeg)
     """
-    def __init__(self, chans, samples):
+    def __init__(self, chans, samples, dropout=0.5):
         super().__init__()
-        self.encoder = ShallowNet(chans=chans, samples=samples)
+        self.encoder = ShallowNet(
+            channel_size=chans,
+            input_time_length=samples,
+            dropout=dropout
+        )
+        self.out_dim = self.encoder.out_dim  # feature dimension
+
+    def forward(self, x):
+        feat = self.encoder(x)               # (B, D_eeg)
+        return feat
+
+
+class EEGBranch_FBCNet(nn.Module):
+    """
+    EEG branch using FBCNet as encoder.
+    Input : (B, 1, C, T, Bands)
+    Output : (B, D_eeg) latent representation
+    """
+    def __init__(self, chans, samples, nBands=9, m=32, strideFactor=4, temporalLayer="LogVarLayer"):
+        super().__init__()
+        self.encoder = FBCNet(nChan=chans, nBands=nBands, m=m,
+                              strideFactor=strideFactor,
+                              temporalLayer=temporalLayer)
         self.out_dim = self.encoder.out_dim
 
     def forward(self, x):
-        feat = self.encoder(x)
+        feat = self.encoder(x)  # (B, out_dim)
         return feat
 
 
