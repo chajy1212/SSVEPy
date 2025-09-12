@@ -6,6 +6,7 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, ConcatDataset, random_split
 
 from dual_attention import DualAttention
@@ -17,6 +18,7 @@ from branches import (
     StimulusBranch,
     TemplateBranch
 )
+from losses import SupConLoss
 
 
 # ===== Reproducibility =====
@@ -86,8 +88,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, criterion, device,
-                    with_task=False):
+                    dataloader, optimizer, ce_criterion, con_criterion,
+                    device, with_task=False, weight_con=1.0):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -106,13 +108,21 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)                                  # (B, D_eeg)
-        stim_feat = stim_branch(stim)                               # (B, D_query)
-        temp_feat = temp_branch(eeg, label)                         # (B, D_query)
-        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
+        eeg_feat = eeg_branch(eeg)                                          # (B, D_eeg)
+        stim_feat = stim_branch(stim)                                       # (B, D_query)
+        temp_feat = temp_branch(eeg, label)                                 # (B, D_query)
+        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
 
-        # Loss + backward
-        loss = criterion(logits, label)
+        # CE loss
+        loss_ce = ce_criterion(logits, label)
+
+        # SupCon loss (features + labels)
+        feat = pooled.unsqueeze(1).to(device)                               # (B, 1, D)
+        loss_con = con_criterion(feat, label.to(device))
+
+        # Joint loss
+        loss = loss_ce + weight_con * loss_con
+
         loss.backward()
         optimizer.step()
 
@@ -134,8 +144,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, criterion, device, with_task=False,
-             n_classes=None, trial_time=None):
+             dataloader, ce_criterion, con_criterion, device,
+             with_task=False, n_classes=None, trial_time=None, weight_con=1.0):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -156,9 +166,13 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg)
         stim_feat = stim_branch(stim)
         temp_feat = temp_branch(eeg, label)
-        logits, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        loss = criterion(logits, label)
+        loss_ce = ce_criterion(logits, label)
+        feat = pooled.unsqueeze(1)
+        loss_con = con_criterion(feat, label)
+        loss = loss_ce + weight_con * loss_con
+
         total_loss += loss.item() * label.size(0)
 
         _, pred = logits.max(1)
@@ -192,8 +206,16 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 # ===== Main =====
 def main(args):
     set_seed()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
+    # Channel tag + TensorBoard writer
+    if args.pick_channels == "all":
+        ch_tag = "allch"
+    else:
+        ch_tag = "".join(args.pick_channels)
+    writer = SummaryWriter(log_dir=f"/home/jycha/SSVEP/runs/{args.dataset}_{args.encoder}_{ch_tag}")
+
+    # Dataset
     if args.dataset == "AR":
         all_train_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-01.npz")))
         all_test_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-02.npz")))
@@ -245,6 +267,7 @@ def main(args):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
+    # Model
     if args.encoder == "EEGNet":
         eeg_branch = EEGBranch_EEGNet(chans=n_channels, samples=n_samples).to(device)
     elif args.encoder == "ATCNet":
@@ -272,15 +295,20 @@ def main(args):
              list(temp_branch.parameters()) + list(dual_attn.parameters())
 
     optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    ce_criterion = nn.CrossEntropyLoss()
+    con_criterion = SupConLoss(temperature=0.2).to(device)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+    # Train Loop
     for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                train_loader, optimizer, criterion, device, with_task)
-        test_loss, test_acc, task_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                      test_loader, criterion, device,with_task,
-                                                      n_classes=n_classes, trial_time=trial_time)
+        train_loss, train_acc = train_one_epoch(
+            eeg_branch, stim_branch, temp_branch, dual_attn,
+            train_loader, optimizer, ce_criterion, con_criterion, device,
+            with_task, weight_con=1.0)
+        test_loss, test_acc, task_acc, itr = evaluate(
+            eeg_branch, stim_branch, temp_branch, dual_attn,
+            test_loader, ce_criterion, con_criterion, device, with_task,
+            n_classes=n_classes, trial_time=trial_time, weight_con=1.0)
 
         scheduler.step()
 
@@ -296,19 +324,42 @@ def main(args):
             for t, acc in task_acc.items():
                 print(f"   Task {t}: {acc:.4f}")
 
+        # TensorBoard logging
+        writer.add_scalar("Loss/Train", train_loss, epoch)
+        writer.add_scalar("Loss/Test", test_loss, epoch)
+        writer.add_scalar("Accuracy/Train", train_acc, epoch)
+        writer.add_scalar("Accuracy/Test", test_acc, epoch)
+        if itr is not None:
+            writer.add_scalar("ITR/Test", itr, epoch)
+
+    # Save Model
+    save_dir = "/home/jycha/SSVEP/model_path"
+    save_path = os.path.join(save_dir, f"{args.dataset}_{args.encoder}_{ch_tag}.pth")
+
+    torch.save({
+        "eeg_branch": eeg_branch.state_dict(),
+        "stim_branch": stim_branch.state_dict(),
+        "temp_branch": temp_branch.state_dict(),
+        "dual_attn": dual_attn.state_dict(),
+        "optimizer": optimizer.state_dict()
+    }, save_path)
+    print(f"\n[Save] Model saved to {save_path}")
+
+    writer.close()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
+    parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--lr", type=float, default=0.0003)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--pick_channels", type=str, default="all", help=" 'O1,O2,Oz', 'all' ")
-    parser.add_argument("--encoder", type=str, default="ShallowNet", choices=["EEGNet", "ATCNet", "ShallowNet"])
+    parser.add_argument("--encoder", type=str, default="EEGNet", choices=["EEGNet", "ATCNet", "ShallowNet"])
     args = parser.parse_args()
 
     # Parse channel selection
