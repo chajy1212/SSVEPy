@@ -5,7 +5,7 @@ import torch.nn as nn
 from EEGNet import EEGNet
 from ATCNet import ATCNet
 from ShallowNet import ShallowNet
-from template_network import DTN
+from DTN import DTN
 from stimulus import StimulusEncoder
 
 
