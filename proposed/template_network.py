@@ -5,63 +5,6 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 
-class FTN(nn.Module):
-    """
-    Fixed Template Network
-     - Compares input EEG segments with fixed templates in a learned feature space.
-     - Returns classification logits + latent representation
-    """
-    def __init__(self, n_channels, n_samples, n_classes, hidden_dim=64):
-        super().__init__()
-        self.n_classes = n_classes
-
-        # Shared feature extractor
-        self.feature_extractor = nn.Sequential(
-            nn.Conv2d(1, 16, (1, 9), padding=(0, 4), bias=False),
-            nn.BatchNorm2d(16),
-            nn.Conv2d(16, hidden_dim, (n_channels, 1), bias=False),
-            nn.BatchNorm2d(hidden_dim),
-            nn.Tanh()
-        )
-
-        # Fixed templates (frozen, not updated during training)
-        self.register_buffer("templates", torch.randn(n_classes, 1, n_channels, n_samples))
-
-        # Classification head
-        self.fc = nn.Linear(hidden_dim, n_classes)
-
-
-    def forward(self, x, return_feat=False):
-        """
-        Args:
-            x (Tensor): EEG input of shape (B, 1, C, T)
-            return_feat (bool):
-                - True → return (logits, representation)
-                - False → return logits only
-
-        Returns:
-            logits (Tensor): (B, n_classes) classification output
-            feat_x (Tensor): (B, hidden_dim) latent representation
-        """
-        # EEG feature extraction
-        feat_x = self.feature_extractor(x)          # (B, hidden_dim, 1, T')
-        feat_x = feat_x.mean(dim=-1).squeeze(-1)    # (B, hidden_dim)
-
-        # Template feature extraction
-        t = self.feature_extractor(self.templates)  # (C, hidden_dim, 1, T')
-        t = t.mean(dim=-1).squeeze(-1)              # (C, hidden_dim)
-
-        # Cosine similarity between EEG features and templates
-        sim = F.linear(F.normalize(feat_x, dim=1),
-                       F.normalize(t, dim=1))       # (B, C)
-
-        logits = self.fc(sim)
-
-        if return_feat:
-            return logits, feat_x
-        return logits, feat_x
-
-
 class DTN(nn.Module):
     """
     Dynamic Template Network
