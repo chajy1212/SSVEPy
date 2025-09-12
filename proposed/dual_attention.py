@@ -38,7 +38,7 @@ class DualAttention(nn.Module):
 
         # concat sequence: [stim, temp] as queries, eeg as key/value
         query = torch.cat([stim, temp], dim=1)      # (B, 2, D)
-        key_value = eeg                         # (B, 1, D)
+        key_value = eeg                             # (B, 1, D)
 
         # apply RoPE to Q and K
         q_rot = self.attn.in_proj_weight[: self.attn.embed_dim]                         # Q projection weight
