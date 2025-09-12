@@ -37,12 +37,12 @@ class DualAttention(nn.Module):
         temp = self.temp_proj(temp_feat).unsqueeze(1)   # (B, 1, D)
 
         # concat sequence: [stim, temp] as queries, eeg as key/value
-        query = torch.cat([stim, temp], dim=1)   # (B, 2, D)
-        key_value = eeg                                 # (B, 1, D)
+        query = torch.cat([stim, temp], dim=1)      # (B, 2, D)
+        key_value = eeg                         # (B, 1, D)
 
         # apply RoPE to Q and K
-        q_rot = self.attn.in_proj_weight[: self.attn.embed_dim]
-        k_rot = self.attn.in_proj_weight[self.attn.embed_dim: 2 * self.attn.embed_dim]
+        q_rot = self.attn.in_proj_weight[: self.attn.embed_dim]                         # Q projection weight
+        k_rot = self.attn.in_proj_weight[self.attn.embed_dim: 2 * self.attn.embed_dim]  # K projection weight
 
         # project queries & keys
         Q = torch.matmul(query, q_rot.T)      # (B, 2, D)
@@ -50,7 +50,7 @@ class DualAttention(nn.Module):
 
         # split heads
         Q = Q.view(B, Q.size(1), self.attn.num_heads, -1)  # (B, 2, H, D_head)
-        K = K.view(B, K.size(1), self.attn.num_heads, -1)  # (B, 1, H, D_head)
+        K = K.view(B, K.size(1), self.attn.num_heads, -1)  # (B, 1, H, D_head), D_head = D / num_heads
 
         # apply rotary embedding (adds relative position info)
         Q, K = self.rotary_emb.rotate_queries_or_keys(Q), self.rotary_emb.rotate_queries_or_keys(K)
