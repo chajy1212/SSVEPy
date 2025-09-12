@@ -11,7 +11,7 @@ SSVEPy/
 │   ├── dual_attention.py       	# Dual Attention 모듈, EEG→Key/Value, Stimulus/Template→Query 결합
 │   ├── EEGNet.py               	# EEGNet 기반 EEG 인코더
 │   ├── ATCNet.py               	# ATCNet 기반 EEG 인코더
-│   ├── ShallowNet.py                   # ShallowNet 기반 EEG 인코더
+│   ├── ShallowNet.py               # ShallowNet 기반 EEG 인코더
 │   ├── preprocess_AR.py        	# AR Dataset Raw EEG → .npz 변환 유틸
 │   ├── stimulus.py             	# StimulusEncoder, 자극 reference 신호(sin/cos) latent feature 추출
 │   ├── template_network.py     	# Dynamic Template Network (DTN)
