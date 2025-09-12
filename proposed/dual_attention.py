@@ -64,7 +64,7 @@ class DualAttention(nn.Module):
 
         # scaled dot-product attention
         attn_scores = torch.einsum("bqhd,bkhd->bhqk", Q, K) / (self.d_head ** 0.5)  # (B, H, 2, 1)
-        attn_weights = F.softmax(attn_scores, dim=-1)                                   # (B, H, 2, 1)
+        attn_weights = F.softmax(attn_scores, dim=-1)                                 # (B, H, 2, 1)
         attn_out = torch.einsum("bhqk,bkhd->bqhd", attn_weights, V)                 # (B, 2, H, D_head)
 
         # reshape back
