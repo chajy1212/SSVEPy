@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
+import numpy as np
 
 from EEGNet import EEGNet
 from ATCNet import ATCNet
@@ -78,25 +79,34 @@ class StimulusBranch(nn.Module):
     Input : (B, T, 2) sinusoidal references (sin, cos)
     Output: (B, D_stim)
     """
-    def __init__(self, hidden_dim=128, n_harmonics=3):
+    def __init__(self, freqs, T, sfreq=256.0, hidden_dim=128, n_harmonics=3):
         super().__init__()
+        self.freqs = freqs  # list or np.array of stimulus freqs
+        self.T = T
+        self.sfreq = sfreq
         self.n_harmonics = n_harmonics
         self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
 
-    def forward(self, stim):
+    def forward(self, labels):
         """
-        stim: (B, T, 2) fundamental sin/cos
-        Returns: (B, D_stim)
+        Args:
+            labels: (B,) class indices
+        Returns:
+            feat: (B, D_stim)
         """
-        base_sin, base_cos = stim[..., 0], stim[..., 1]              # (B, T)
+        B = labels.size(0)
+        t = torch.arange(self.T, dtype=torch.float32, device=labels.device) / self.sfreq
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            harmonics.append(torch.sin(h * torch.arcsin(base_sin)))  # sin(hf)
-            harmonics.append(torch.cos(h * torch.arccos(base_cos)))  # cos(hf)
+            f = torch.tensor([self.freqs[int(l)] for l in labels], dtype=torch.float32, device=labels.device)
+            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0))  # (B, T)
+            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0))  # (B, T)
+            harmonics.append(sin_h)
+            harmonics.append(cos_h)
 
-        stim_harm = torch.stack(harmonics, dim=-1)  # (B, T, 2*n_harmonics)
-        feat = self.encoder(stim_harm)              # (B, hidden_dim) = (B, D_stim)
+        stim_harm = torch.stack(harmonics, dim=-1)   # (B, T, 2*n_harmonics)
+        feat = self.encoder(stim_harm)               # (B, hidden_dim)
         return feat
 
 

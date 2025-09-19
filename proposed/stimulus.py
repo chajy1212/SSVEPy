@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
+import numpy as np
 
 
 class StimulusEncoder(nn.Module):

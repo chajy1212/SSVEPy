@@ -18,7 +18,6 @@ from branches import (
     StimulusBranch,
     TemplateBranch
 )
-from losses import SupConLoss
 
 
 # ===== Reproducibility =====
@@ -88,8 +87,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, ce_criterion, con_criterion,
-                    device, with_task=False, weight_con=1.0):
+                    dataloader, optimizer, ce_criterion,
+                    device, with_task=False):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -100,28 +99,21 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for batch in dataloader:
         if with_task:
-            eeg, stim, label, _ = batch
+            eeg, label, _ = batch
         else:
-            eeg, stim, label = batch
-        eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
+            eeg, label = batch
+        eeg, label = eeg.to(device), label.to(device)
 
         optimizer.zero_grad()
 
         # Forward
         eeg_feat = eeg_branch(eeg)                                          # (B, D_eeg)
-        stim_feat = stim_branch(stim)                                       # (B, D_query)
+        stim_feat = stim_branch(label)                                      # (B, D_query)
         temp_feat = temp_branch(eeg, label)                                 # (B, D_query)
         logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
 
         # CE loss
-        loss_ce = ce_criterion(logits, label)
-
-        # SupCon loss (features + labels)
-        feat = pooled.unsqueeze(1).to(device)                               # (B, 1, D)
-        loss_con = con_criterion(feat, label.to(device))
-
-        # Joint loss
-        loss = loss_ce + weight_con * loss_con
+        loss = ce_criterion(logits, label)
 
         loss.backward()
         optimizer.step()
@@ -144,8 +136,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, con_criterion, device,
-             with_task=False, n_classes=None, trial_time=None, weight_con=1.0):
+             dataloader, ce_criterion, device,
+             with_task=False, n_classes=None, trial_time=None):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -157,22 +149,18 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for batch in dataloader:
         if with_task:
-            eeg, stim, label, task = batch
+            eeg, label, task = batch
         else:
-            eeg, stim, label = batch
+            eeg, label = batch
             task = None
-        eeg, stim, label = eeg.to(device), stim.to(device), label.to(device)
+        eeg, label = eeg.to(device), label.to(device)
 
         eeg_feat = eeg_branch(eeg)
-        stim_feat = stim_branch(stim)
+        stim_feat = stim_branch(label)
         temp_feat = temp_branch(eeg, label)
         logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        loss_ce = ce_criterion(logits, label)
-        feat = pooled.unsqueeze(1)
-        loss_con = con_criterion(feat, label)
-        loss = loss_ce + weight_con * loss_con
-
+        loss = ce_criterion(logits, label)
         total_loss += loss.item() * label.size(0)
 
         _, pred = logits.max(1)
@@ -206,14 +194,14 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 # ===== Main =====
 def main(args):
     set_seed()
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Channel tag + TensorBoard writer
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
         ch_tag = "".join(args.pick_channels)
-    writer = SummaryWriter(log_dir=f"/home/jycha/SSVEP/runs/{args.dataset}_{args.encoder}_{ch_tag}")
+    writer = SummaryWriter(log_dir=f"/home/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
 
     # Dataset
     if args.dataset == "AR":
@@ -229,11 +217,16 @@ def main(args):
 
         train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
         test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
-        n_channels, n_samples, n_classes = train_dataset.datasets[0].C, train_dataset.datasets[0].T, \
-            train_dataset.datasets[0].n_classes
+
+        n_channels = train_dataset.datasets[0].C
+        n_samples = train_dataset.datasets[0].T
+        n_classes = train_dataset.datasets[0].n_classes
         ch_names = train_dataset.datasets[0].ch_names
-        trial_time = n_samples / train_dataset.datasets[0].sfreq
+        sfreq = train_dataset.datasets[0].sfreq
+        trial_time = n_samples / sfreq
         with_task = True
+
+        freqs = [train_dataset.datasets[0].class2freq[i] for i in range(n_classes)] # class index → Hz
 
     elif args.dataset == "Nakanishi2015":
         subjects = parse_subjects(args.subjects, "Nakanishi2015")
@@ -241,19 +234,31 @@ def main(args):
         N = len(dataset)
         N_train = int(0.8 * N)
         train_dataset, test_dataset = random_split(dataset, [N_train, N - N_train])
-        n_channels, n_samples, n_classes = dataset.C, dataset.T, dataset.n_classes
+
+        n_channels = dataset.C
+        n_samples = dataset.T
+        n_classes = dataset.n_classes
         ch_names = dataset.ch_names
-        trial_time = n_samples / dataset.sfreq
+        sfreq = dataset.sfreq
+        trial_time = n_samples / sfreq
         with_task = False
+
+        freqs = list(dataset.freqs)  # label index → Hz
 
     elif args.dataset == "Lee2019":
         subjects = parse_subjects(args.subjects, "Lee2019")
         train_dataset = Lee2019Dataset(subjects=subjects, train=True, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset(subjects=subjects, train=False, pick_channels=args.pick_channels)
-        n_channels, n_samples, n_classes = train_dataset.C, train_dataset.T, train_dataset.n_classes
+
+        n_channels = train_dataset.C
+        n_samples = train_dataset.T
+        n_classes = train_dataset.n_classes
         ch_names = train_dataset.ch_names
-        trial_time = n_samples / 250.0  # Resampled to 250 Hz
+        sfreq = 250.0
+        trial_time = n_samples / sfreq
         with_task = False
+
+        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
     else:
         raise ValueError("Unsupported dataset")
@@ -277,7 +282,9 @@ def main(args):
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
 
-    stim_branch = StimulusBranch(hidden_dim=args.d_query, n_harmonics=3).to(device)
+    stim_branch = StimulusBranch(freqs=freqs, T=n_samples,
+                                 sfreq=sfreq, hidden_dim=args.d_query,
+                                 n_harmonics=3).to(device)
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                  n_channels=n_channels,
                                  n_samples=n_samples,
@@ -296,19 +303,19 @@ def main(args):
 
     optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
     ce_criterion = nn.CrossEntropyLoss()
-    con_criterion = SupConLoss(temperature=0.2).to(device)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Train Loop
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(
             eeg_branch, stim_branch, temp_branch, dual_attn,
-            train_loader, optimizer, ce_criterion, con_criterion, device,
-            with_task, weight_con=1.0)
+            train_loader, optimizer, ce_criterion, device, with_task
+        )
         test_loss, test_acc, task_acc, itr = evaluate(
             eeg_branch, stim_branch, temp_branch, dual_attn,
-            test_loader, ce_criterion, con_criterion, device, with_task,
-            n_classes=n_classes, trial_time=trial_time, weight_con=1.0)
+            test_loader, ce_criterion, device, with_task,
+            n_classes=n_classes, trial_time=trial_time
+        )
 
         scheduler.step()
 
@@ -334,7 +341,7 @@ def main(args):
 
     # Save Model
     save_dir = "/home/jycha/SSVEP/model_path"
-    save_path = os.path.join(save_dir, f"{args.dataset}_{args.encoder}_{ch_tag}.pth")
+    save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
 
     torch.save({
         "eeg_branch": eeg_branch.state_dict(),
@@ -352,10 +359,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="2", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--lr", type=float, default=0.0003)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--pick_channels", type=str, default="all", help=" 'O1,O2,Oz', 'all' ")

@@ -11,7 +11,7 @@ from moabb.datasets import Lee2019_SSVEP
 
 
 class ARDataset(Dataset):
-    def __init__(self, npz_file, n_classes=None, T_stim=None):
+    def __init__(self, npz_file, n_classes=None):
         """
         npz_file: path to .npz file
         T_stim: stimulus length (default = EEG segment length)
@@ -24,7 +24,6 @@ class ARDataset(Dataset):
         self.sfreq = float(data["sfreq"])
 
         self.N, self.C, self.T = self.epochs.shape
-        self.T_stim = self.T if T_stim is None else T_stim
 
         # Map frequency ↔ class index
         unique_freqs = sorted(np.unique(self.labels))
@@ -39,20 +38,12 @@ class ARDataset(Dataset):
         eeg = self.epochs[idx]  # (C,T)
         label_hz = int(self.labels[idx])
         class_label = self.freq2class[label_hz]
+        task = self.tasks[idx]
 
         # EEG input
         eeg = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0)  # (1,C,T)
 
-        # Generate sinusoidal references
-        t = np.arange(self.T_stim) / self.sfreq
-        f = label_hz
-        stim = np.stack([np.sin(2 * np.pi * f * t), np.cos(2 * np.pi * f * t)], axis=-1)  # (T_stim,2)
-        stim = torch.tensor(stim, dtype=torch.float32)
-
-        task = self.tasks[idx]
-
-        assert eeg.shape[-1] == stim.shape[0], "EEG segment length and stimulus length must match (2s)."
-        return eeg, stim, class_label, task
+        return eeg, class_label, task
 
 
 class Nakanishi2015Dataset(Dataset):
@@ -93,17 +84,10 @@ class Nakanishi2015Dataset(Dataset):
     def __getitem__(self, idx):
         eeg_np = self.epochs[idx]  # (C, T)
         label = int(self.labels[idx])
-        f = float(self.freqs[label])
 
         eeg = torch.tensor(eeg_np, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
 
-        # Reference signals
-        t = np.arange(self.T, dtype=np.float32) / self.sfreq
-        stim_np = np.stack([np.sin(2 * np.pi * f * t),
-                            np.cos(2 * np.pi * f * t)], axis=-1)  # (T, 2)
-        stim = torch.tensor(stim_np, dtype=torch.float32)
-
-        return eeg, stim, label
+        return eeg, label
 
 
 class Lee2019Dataset(Dataset):
@@ -123,7 +107,8 @@ class Lee2019Dataset(Dataset):
         labels = labels[session_mask]
 
         le = LabelEncoder()
-        y = le.fit_transform(labels)
+        self.labels = le.fit_transform(labels)
+        self.freqs = le.classes_.astype(float)
 
         # Channel mapping (ch1 ~ ch62)
         mapping_lee2019 = {
@@ -139,7 +124,7 @@ class Lee2019Dataset(Dataset):
             "ch56": "F10", "ch57": "AF7", "ch58": "AF3", "ch59": "AF4", "ch60": "AF8", "ch61": "PO3", "ch62": "PO4"
         }
 
-        ch_names = [mapping_lee2019.get(f"ch{i+1}", f"ch{i+1}") for i in range(X.shape[1])]
+        ch_names = [mapping_lee2019.get(f"ch{i + 1}", f"ch{i + 1}") for i in range(X.shape[1])]
 
         info = mne.create_info(ch_names=ch_names, sfreq=1000, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
@@ -150,29 +135,16 @@ class Lee2019Dataset(Dataset):
         raw.resample(rfreq)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
 
-        self.X = torch.tensor(raw.get_data(), dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.long)
-        self.freqs = le.classes_
-
-        self.N, self.C, self.T = self.X.shape
-        self.n_classes = len(np.unique(self.y))
+        self.epochs = raw.get_data().astype(np.float32)  # (N,C,T)
+        self.labels = torch.tensor(self.labels, dtype=torch.long)
+        self.N, self.C, self.T = self.epochs.shape
+        self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
 
-        # Reference signals
-        self.stim_refs = []
-        t = np.arange(self.T) / rfreq
-        for label in self.y:
-            f = float(self.freqs[label])
-            ref = np.stack([np.sin(2 * np.pi * f * t),
-                            np.cos(2 * np.pi * f * t)], axis=-1)
-            self.stim_refs.append(ref)
-        self.stim_refs = torch.tensor(np.array(self.stim_refs), dtype=torch.float32)
-
     def __len__(self):
-        return len(self.X)
+        return self.N
 
     def __getitem__(self, idx):
-        eeg = self.X[idx].unsqueeze(0)  # (1, C, T)
-        stim = self.stim_refs[idx]
-        label = self.y[idx]
-        return eeg, stim, label
+        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1,C,T)
+        label = int(self.labels[idx])
+        return eeg, label
