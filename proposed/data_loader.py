@@ -35,13 +35,15 @@ class ARDataset(Dataset):
         return self.N
 
     def __getitem__(self, idx):
-        eeg = self.epochs[idx]  # (C,T)
+        # EEG input
+        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1, C, T)
+
+        # Convert Hz label → class index
         label_hz = int(self.labels[idx])
         class_label = self.freq2class[label_hz]
-        task = self.tasks[idx]
 
-        # EEG input
-        eeg = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0)  # (1,C,T)
+        # Task name
+        task = self.tasks[idx]
 
         return eeg, class_label, task
 
@@ -56,13 +58,12 @@ class Nakanishi2015Dataset(Dataset):
         le = LabelEncoder()
         self.labels = le.fit_transform(labels)
         self.freqs = le.classes_.astype(float)
-        self.sfreq = 256.0
 
         # True channel names from the original paper
         ch_names = ["PO7", "PO3", "POz", "PO4", "PO8", "O1", "Oz", "O2"]
 
         # Build MNE object
-        info = mne.create_info(ch_names=ch_names, sfreq=self.sfreq, ch_types="eeg")
+        info = mne.create_info(ch_names=ch_names, sfreq=256.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
 
         # Pick channels if requested
@@ -70,7 +71,9 @@ class Nakanishi2015Dataset(Dataset):
             raw.pick(pick_channels)
 
         # Bandpass filter
-        raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
+        raw.filter(l_freq=6, h_freq=80, fir_design="firwin", verbose=False)
+
+        self.sfreq = raw.info["sfreq"]
 
         # Final data
         self.epochs = raw.get_data().astype(np.float32)  # (N, C, T)
@@ -91,7 +94,7 @@ class Nakanishi2015Dataset(Dataset):
 
 
 class Lee2019Dataset(Dataset):
-    def __init__(self, subjects=[1], train=True, rfreq=250, pick_channels="all"):
+    def __init__(self, subjects=[1], train=True, pick_channels="all"):
         super().__init__()
         paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
@@ -107,7 +110,8 @@ class Lee2019Dataset(Dataset):
         labels = labels[session_mask]
 
         le = LabelEncoder()
-        self.labels = le.fit_transform(labels)
+        encoded_labels = le.fit_transform(labels)
+        self.labels = torch.tensor(encoded_labels, dtype=torch.long)
         self.freqs = le.classes_.astype(float)
 
         # Channel mapping (ch1 ~ ch62)
@@ -126,20 +130,26 @@ class Lee2019Dataset(Dataset):
 
         ch_names = [mapping_lee2019.get(f"ch{i + 1}", f"ch{i + 1}") for i in range(X.shape[1])]
 
-        info = mne.create_info(ch_names=ch_names, sfreq=1000, ch_types="eeg")
+        info = mne.create_info(ch_names=ch_names, sfreq=1000.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
 
         if pick_channels != "all":
             raw.pick(pick_channels)
 
-        raw.resample(rfreq)
+        # Downsample 1000 → 250 Hz
+        raw.resample(250, npad="auto")
+
+        # Band-pass filter (1–40 Hz)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
 
+        # Average reference
+        raw.set_eeg_reference('average', projection=False)
+
         self.epochs = raw.get_data().astype(np.float32)  # (N,C,T)
-        self.labels = torch.tensor(self.labels, dtype=torch.long)
         self.N, self.C, self.T = self.epochs.shape
         self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
+        self.sfreq = raw.info["sfreq"]
 
     def __len__(self):
         return self.N

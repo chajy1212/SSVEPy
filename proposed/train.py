@@ -35,7 +35,7 @@ def print_total_model_size(*models):
     print(f"[Total Model Size]")
     print(f"  Total Parameters     : {total_params:,}")
     print(f"  Trainable Parameters : {trainable_params:,}")
-    print(f"  Memory Estimate      : {total_params * 4 / (1024**2):.2f} MB\n")
+    print(f"  Memory Estimate      : {total_params * 4 / (1024 ** 2):.2f} MB\n")
 
 
 # ===== ITR function =====
@@ -107,10 +107,10 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)                                          # (B, D_eeg)
-        stim_feat = stim_branch(label)                                      # (B, D_query)
-        temp_feat = temp_branch(eeg, label)                                 # (B, D_query)
-        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)    # (B, n_classes)
+        eeg_feat = eeg_branch(eeg)  # (B, D_eeg)
+        stim_feat = stim_branch(label)  # (B, D_query)
+        temp_feat = temp_branch(eeg, label)  # (B, D_query)
+        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
 
         # CE loss
         loss = ce_criterion(logits, label)
@@ -201,7 +201,7 @@ def main(args):
         ch_tag = "allch"
     else:
         ch_tag = "".join(args.pick_channels)
-    writer = SummaryWriter(log_dir=f"/home/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
+    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
 
     # Dataset
     if args.dataset == "AR":
@@ -226,7 +226,7 @@ def main(args):
         trial_time = n_samples / sfreq
         with_task = True
 
-        freqs = [train_dataset.datasets[0].class2freq[i] for i in range(n_classes)] # class index → Hz
+        freqs = [train_dataset.datasets[0].class2freq[i] for i in range(n_classes)]  # class index → Hz
 
     elif args.dataset == "Nakanishi2015":
         subjects = parse_subjects(args.subjects, "Nakanishi2015")
@@ -254,7 +254,7 @@ def main(args):
         n_samples = train_dataset.T
         n_classes = train_dataset.n_classes
         ch_names = train_dataset.ch_names
-        sfreq = 250.0
+        sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
         with_task = False
 
@@ -267,7 +267,7 @@ def main(args):
     print(f"[INFO] Subjects: {args.subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
     print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
-    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s\n")
+    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
@@ -340,7 +340,7 @@ def main(args):
             writer.add_scalar("ITR/Test", itr, epoch)
 
     # Save Model
-    save_dir = "/home/jycha/SSVEP/model_path"
+    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
     save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
 
     torch.save({
@@ -357,15 +357,15 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
-    parser.add_argument("--data_root", type=str, default="/home/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="2", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
+    parser.add_argument("--data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
+    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="all", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
     parser.add_argument("--encoder", type=str, default="EEGNet", choices=["EEGNet", "ATCNet", "ShallowNet"])
     args = parser.parse_args()
 
