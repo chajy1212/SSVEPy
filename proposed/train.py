@@ -11,13 +11,7 @@ from torch.utils.data import DataLoader, ConcatDataset, random_split
 
 from dual_attention import DualAttention
 from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
-from branches import (
-    EEGBranch_EEGNet,
-    EEGBranch_ATCNet,
-    EEGBranch_ShallowNet,
-    StimulusBranch,
-    TemplateBranch
-)
+from branches import EEGBranch, StimulusBranch, TemplateBranch
 
 
 # ===== Reproducibility =====
@@ -65,7 +59,7 @@ def parse_subjects(subjects_arg, dataset_name=""):
         if dataset_name == "AR":
             subjects = list(range(1, 25))  # 1 ~ 24
         elif dataset_name == "Nakanishi2015":
-            subjects = list(range(1, 10))  # 1 ~ 9
+            subjects = list(range(1, 11))  # 1 ~ 10
         elif dataset_name == "Lee2019":
             subjects = list(range(1, 55))  # 1 ~ 54
         else:
@@ -274,11 +268,7 @@ def main(args):
 
     # Model
     if args.encoder == "EEGNet":
-        eeg_branch = EEGBranch_EEGNet(chans=n_channels, samples=n_samples).to(device)
-    elif args.encoder == "ATCNet":
-        eeg_branch = EEGBranch_ATCNet(chans=n_channels, samples=n_samples).to(device)
-    elif args.encoder == "ShallowNet":
-        eeg_branch = EEGBranch_ShallowNet(chans=n_channels, samples=n_samples).to(device)
+        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
 
@@ -357,16 +347,16 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
-    parser.add_argument("--data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
-    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
+    parser.add_argument("--data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
-    parser.add_argument("--encoder", type=str, default="EEGNet", choices=["EEGNet", "ATCNet", "ShallowNet"])
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--encoder", type=str, default="EEGNet", choices=["EEGNet"])
     args = parser.parse_args()
 
     # Parse channel selection
