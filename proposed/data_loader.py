@@ -51,6 +51,7 @@ class ARDataset(Dataset):
 class Nakanishi2015Dataset(Dataset):
     def __init__(self, subjects=[1], pick_channels="all"):
         dataset = Nakanishi2015()
+        dataset.subject_list = list(range(1, 11))
         paradigm = SSVEP()
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
