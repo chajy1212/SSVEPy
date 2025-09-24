@@ -6,10 +6,8 @@ Steady State Visually Evoked Potential (SSVEP) Library
 SSVEPy/
 │
 ├── proposed/
-│   ├── ATCNet.py               	# ATCNet 기반 EEG 인코더
 │   ├── DTN.py     			        # Dynamic Template Network (DTN)
 │   ├── EEGNet.py               	# EEGNet 기반 EEG 인코더
-│   ├── ShallowNet.py               # ShallowNet 기반 EEG 인코더
 │   ├── branches.py             	# EEG, Stimulus, Template branch encoders
 │   ├── data_loader.py          	# Dataset 정의
 │   ├── dual_attention.py       	# Dual Attention 모듈, EEG→Key/Value, Stimulus/Template→Query 결합
