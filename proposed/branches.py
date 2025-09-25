@@ -102,10 +102,12 @@ class StimulusBranchWithPhase(nn.Module):
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            f = freqs[labels]    # (B,)
-            phi = phases[labels] # (B,)
+            f = freqs[labels]                   # (B,)
+            phi = phases[labels] * 2 * np.pi    # (B,) convert cycles → rad
+        
             sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
             cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
+
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
