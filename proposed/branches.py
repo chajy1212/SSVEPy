@@ -61,6 +61,61 @@ class StimulusBranch(nn.Module):
         return feat
 
 
+class StimulusBranchWithPhase(nn.Module):
+    """
+    Stimulus branch using StimulusEncoder with subject-specific phase correction.
+    Input : labels (B,)
+    Output: (B, D_stim)
+    """
+    def __init__(self, freqs, phases, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=64):
+        super().__init__()
+        self.freqs = torch.tensor(freqs, dtype=torch.float32)   # (n_classes,)
+        self.phases = torch.tensor(phases, dtype=torch.float32) # (n_classes,)
+        self.T = T
+        self.sfreq = sfreq
+        self.n_harmonics = n_harmonics
+
+        # Stimulus encoder
+        self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
+
+        # Projection + normalization
+        self.proj = nn.Sequential(
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, out_dim)
+        )
+        self.out_dim = out_dim
+
+    def forward(self, labels):
+        """
+        Args:
+            labels: (B,) class indices
+        Returns:
+            feat: (B, out_dim)
+        """
+        device = labels.device
+        freqs = self.freqs.to(device)
+        phases = self.phases.to(device)   # 각 클래스의 위상 정보 포함
+        B = labels.size(0)
+
+        # time vector
+        t = torch.arange(self.T, dtype=torch.float32, device=device) / self.sfreq
+
+        harmonics = []
+        for h in range(1, self.n_harmonics + 1):
+            f = freqs[labels]    # (B,)
+            phi = phases[labels] # (B,)
+            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
+            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
+            harmonics.append(sin_h)
+            harmonics.append(cos_h)
+
+        stim_harm = torch.stack(harmonics, dim=-1)  # (B, T, 2*n_harmonics)
+        feat = self.encoder(stim_harm)              # (B, hidden_dim)
+        feat = self.proj(feat)                      # (B, out_dim)
+
+        return feat
+
+
 class TemplateBranch(nn.Module):
     """
     Template branch using DTN.

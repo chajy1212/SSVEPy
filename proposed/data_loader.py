@@ -17,16 +17,18 @@ class ARDataset(Dataset):
         T_stim: stimulus length (default = EEG segment length)
         """
         data = np.load(npz_file, allow_pickle=True)
-        self.epochs = data["epochs"]   # (N,C,T)
-        self.labels = data["labels"]   # (N,)
-        self.tasks  = data["tasks"]    # (N,)
+        self.epochs = data["epochs"]  # (N,C,T)
+        self.labels = data["labels"]  # (N,)
+        self.freqs = data["freqs"]    # (N,)
+        self.phases = data["phases"]  # (N,)
+        self.tasks = data["tasks"]    # (N,)
         self.ch_names = data["ch_names"]
         self.sfreq = float(data["sfreq"])
 
         self.N, self.C, self.T = self.epochs.shape
 
         # Map frequency ↔ class index
-        unique_freqs = sorted(np.unique(self.labels))
+        unique_freqs = sorted(np.unique(self.freqs))
         self.freq2class = {f: i for i, f in enumerate(unique_freqs)}
         self.class2freq = {i: f for f, i in self.freq2class.items()}
         self.n_classes = len(unique_freqs)
@@ -39,8 +41,11 @@ class ARDataset(Dataset):
         eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1, C, T)
 
         # Convert Hz label → class index
-        label_hz = int(self.labels[idx])
-        class_label = self.freq2class[label_hz]
+        freq_val = float(self.freqs[idx])
+        class_label = self.freq2class[freq_val]
+
+        # Phase
+        phase = float(self.phases[idx])
 
         # Task name
         task = self.tasks[idx]
@@ -138,7 +143,7 @@ class Lee2019Dataset(Dataset):
             raw.pick(pick_channels)
 
         # Downsample 1000 → 250 Hz
-        raw.resample(250, npad="auto")
+        raw.resample(250.0, npad="auto")
 
         # Band-pass filter (1–40 Hz)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
@@ -159,3 +164,51 @@ class Lee2019Dataset(Dataset):
         eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1,C,T)
         label = int(self.labels[idx])
         return eeg, label
+
+
+class BETADataset(Dataset):
+    def __init__(self, npz_file, pick_channels="all"):
+        data = np.load(npz_file, allow_pickle=True)
+
+        self.epochs = data["epochs"].astype(np.float32)   # (N, C, T)
+        self.labels = np.array(data["labels"], dtype=int)
+        self.freqs = np.array(data["freqs"], dtype=float)
+        self.phases = np.array(data["phases"], dtype=float)
+        self.sfreq = float(data["sfreq"])
+        self.ch_names = [str(ch) for ch in data["ch_names"]]
+
+        # pick_channels
+        if isinstance(pick_channels, str):
+            if pick_channels.lower() == "all":
+                pick_channels = "all"
+            else:
+                pick_channels = [ch.strip() for ch in pick_channels.split(",")]
+        elif isinstance(pick_channels, (list, tuple, np.ndarray)):
+            pick_channels = [str(ch).strip() for ch in pick_channels]
+
+        if pick_channels != "all":
+            name_map = {c: i for i, c in enumerate(self.ch_names)}
+            picks = [name_map[ch] for ch in pick_channels if ch in name_map]
+
+            if len(picks) == 0:
+                raise ValueError(
+                    f"[ERROR] No valid channels found in pick_channels={pick_channels}\n"
+                    f"[INFO] Available channels={self.ch_names}"
+                )
+
+            self.epochs = self.epochs[:, picks, :]
+            self.ch_names = [self.ch_names[i] for i in picks]
+
+        self.N, self.C, self.T = self.epochs.shape
+        self.n_classes = len(np.unique(self.labels))
+
+        print(f"[INFO] Loaded {npz_file}, shape={self.epochs.shape}, classes={self.n_classes}, channels={self.ch_names}")
+
+    def __len__(self):
+        return self.N
+
+    def __getitem__(self, idx):
+        sig = self.epochs[idx]  # (C, T)
+        lbl = int(self.labels[idx])
+        eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
+        return eeg, lbl

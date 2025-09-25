@@ -7,11 +7,25 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, ConcatDataset, random_split
+from torch.utils.data import DataLoader, ConcatDataset, random_split, Subset
 
 from dual_attention import DualAttention
-from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
-from branches import EEGBranch, StimulusBranch, TemplateBranch
+from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset, BETADataset
+from branches import EEGBranch, StimulusBranch, StimulusBranchWithPhase, TemplateBranch
+
+
+def block_split_beta(dataset, train_blocks=[0,1,2], test_blocks=[3]):
+    """
+    Block-aware split for BETA dataset.
+    dataset.blocks shape = (N,)
+    """
+    if dataset.blocks is None:
+        raise ValueError("Dataset has no block information. Did you preprocess with blocks?")
+
+    train_idx = [i for i, b in enumerate(dataset.blocks) if b in train_blocks]
+    test_idx = [i for i, b in enumerate(dataset.blocks) if b in test_blocks]
+
+    return Subset(dataset, train_idx), Subset(dataset, test_idx)
 
 
 # ===== Reproducibility =====
@@ -62,6 +76,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
             subjects = list(range(1, 11))  # 1 ~ 10
         elif dataset_name == "Lee2019":
             subjects = list(range(1, 55))  # 1 ~ 54
+        elif dataset_name == "BETA":
+            subjects = list(range(1, 71))  # 1 ~ 70
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -199,8 +215,8 @@ def main(args):
 
     # Dataset
     if args.dataset == "AR":
-        all_train_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-01.npz")))
-        all_test_files = sorted(glob.glob(os.path.join(args.data_root, "*ses-02.npz")))
+        all_train_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-01.npz")))
+        all_test_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-02.npz")))
 
         if args.subjects.lower() != "all":
             subjects = parse_subjects(args.subjects, "AR")
@@ -221,6 +237,7 @@ def main(args):
         with_task = True
 
         freqs = [train_dataset.datasets[0].class2freq[i] for i in range(n_classes)]  # class index → Hz
+        phases = list(train_dataset.datasets[0].phases)
 
     elif args.dataset == "Nakanishi2015":
         subjects = parse_subjects(args.subjects, "Nakanishi2015")
@@ -238,6 +255,7 @@ def main(args):
         with_task = False
 
         freqs = list(dataset.freqs)  # label index → Hz
+        phases = None
 
     elif args.dataset == "Lee2019":
         subjects = parse_subjects(args.subjects, "Lee2019")
@@ -253,6 +271,49 @@ def main(args):
         with_task = False
 
         freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
+        phases = None
+
+    elif args.dataset == "BETA":
+        subjects = parse_subjects(args.subjects, "BETA")
+
+        if len(subjects) == 1:  # subject-dependent (한 명만 지정)
+            s = subjects[0]
+            dataset = BETADataset(npz_file=os.path.join(args.beta_data_root, f"S{s}.npz"),
+                                  pick_channels=args.pick_channels)
+
+            train_dataset, test_dataset = block_split_beta(dataset, train_blocks=[0,1,2], test_blocks=[3])
+
+            n_channels = dataset.C
+            n_samples = dataset.T
+            n_classes = dataset.n_classes
+            ch_names = dataset.ch_names
+            sfreq = dataset.sfreq
+            trial_time = n_samples / sfreq
+            with_task = False
+            freqs = list(dataset.freqs)
+            phases = list(dataset.phases)
+
+        else:  # 여러 명(all 등) 선택한 경우 → 합쳐서 학습
+            all_datasets = [BETADataset(npz_file=os.path.join(args.beta_data_root, f"S{s}.npz"),
+                                        pick_channels=args.pick_channels) for s in subjects]
+
+            full_dataset = ConcatDataset(all_datasets)
+
+            N_total = len(full_dataset);
+            N_train = int(0.8 * N_total)
+            train_dataset, test_dataset = random_split(full_dataset, [N_train, N_total-N_train])
+
+            # 대표 subject 하나에서 메타데이터 가져오기
+            ref_ds = all_datasets[0]
+            n_channels = ref_ds.C
+            n_samples = ref_ds.T
+            n_classes = ref_ds.n_classes
+            ch_names = ref_ds.ch_names
+            sfreq = ref_ds.sfreq
+            trial_time = n_samples / sfreq
+            with_task = False
+            freqs = list(ref_ds.freqs)
+            phases = list(ref_ds.phases)
 
     else:
         raise ValueError("Unsupported dataset")
@@ -272,9 +333,20 @@ def main(args):
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
 
-    stim_branch = StimulusBranch(freqs=freqs, T=n_samples,
-                                 sfreq=sfreq, hidden_dim=args.d_query,
-                                 n_harmonics=3).to(device)
+    if args.dataset in ["BETA", "AR"]:
+        stim_branch = StimulusBranchWithPhase(freqs=freqs,
+                                              phases=phases,
+                                              T=n_samples,
+                                              sfreq=sfreq,
+                                              hidden_dim=args.d_query,
+                                              n_harmonics=3).to(device)
+    else:
+        stim_branch = StimulusBranch(freqs=freqs,
+                                     T=n_samples,
+                                     sfreq=sfreq,
+                                     hidden_dim=args.d_query,
+                                     n_harmonics=3).to(device)
+
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                  n_channels=n_channels,
                                  n_samples=n_samples,
@@ -347,16 +419,17 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="Nakanishi2015", choices=["AR", "Nakanishi2015", "Lee2019"])
-    parser.add_argument("--data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz")
-    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019", "BETA"])
+    parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
+    parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_beta")
+    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
-    parser.add_argument("--encoder", type=str, default="EEGNet", choices=["EEGNet"])
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--encoder", type=str, default="EEGNet")
     args = parser.parse_args()
 
     # Parse channel selection

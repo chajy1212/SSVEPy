@@ -1,20 +1,19 @@
 # -*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
-import numpy as np
 
 
 class StimulusEncoder(nn.Module):
     """
     Stimulus Encoder
-    - Encodes sinusoidal reference signals (sin, cos) into latent features.
-    - Input: (B, T, 2) → B=batch, T=time length, 2=[sin, cos]
+    - Encodes sinusoidal reference signals (sin, cos, harmonics) into latent features.
+    - Input: (B, T, 2*n_harmonics)
     - Output: (B, D) → flattened latent representation
     """
     def __init__(self, in_dim=2, hidden_dim=64):
         """
         Args:
-            in_dim (int): input dimension, usually 2 (sin, cos)
+            in_dim (int): input dimension, usually 2 (sin, cos) or 2*n_harmonics
             hidden_dim (int): output embedding dimension (D)
         """
         super().__init__()
@@ -32,7 +31,7 @@ class StimulusEncoder(nn.Module):
     def forward(self, stim):
         """
         Args:
-            stim (Tensor): (B, T, 2) sinusoidal stimulus signals
+            stim (Tensor): (B, T, in_dim) sinusoidal stimulus signals
 
         Returns:
             Tensor: (B, hidden_dim) latent representation
@@ -42,3 +41,5 @@ class StimulusEncoder(nn.Module):
         feat = feat.squeeze(-1)         # (B, hidden_dim)
 
         return feat
+
+
