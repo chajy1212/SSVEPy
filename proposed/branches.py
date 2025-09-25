@@ -69,8 +69,8 @@ class StimulusBranchWithPhase(nn.Module):
     """
     def __init__(self, freqs, phases, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=64):
         super().__init__()
-        self.freqs = torch.tensor(freqs, dtype=torch.float32)   # (n_classes,)
-        self.phases = torch.tensor(phases, dtype=torch.float32) # (n_classes,)
+        self.freqs = torch.tensor(freqs, dtype=torch.float32)  # (n_classes,)
+        self.phases = torch.tensor(phases, dtype=torch.float32)  # (n_classes,)
         self.T = T
         self.sfreq = sfreq
         self.n_harmonics = n_harmonics
@@ -94,7 +94,7 @@ class StimulusBranchWithPhase(nn.Module):
         """
         device = labels.device
         freqs = self.freqs.to(device)
-        phases = self.phases.to(device)   # 각 클래스의 위상 정보 포함
+        phases = self.phases.to(device)
         B = labels.size(0)
 
         # time vector
