@@ -7,11 +7,11 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 from dual_attention import DualAttention
-from data_loader import BETADataset
 from branches import EEGBranch, StimulusBranchWithPhase, TemplateBranch
+from data_loader import TorchBETADataset
 
 
 # ===== Reproducibility =====
@@ -168,132 +168,83 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Channel tag
+    # parse subjects argument (ex: "16-50")
+    parts = args.subjects.split("-")
+    if len(parts) == 2:
+        subjects = list(range(int(parts[0]), int(parts[1]) + 1))
+    else:
+        subjects = [int(s) for s in args.subjects.split(",")]
+
+    # Channel tag + TensorBoard writer
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
         ch_tag = "".join(args.pick_channels)
-
     writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
 
-    if args.dataset == "BETA":
-        subjects = parse_subjects(args.subjects, "BETA")
+    all_accs, all_itrs = [], []
+    for test_subj in subjects:
+        print(f"\n--- LOSO Test Subject: {test_subj} ---")
+        train_subjs = [s for s in subjects if s != test_subj]
 
-        all_accs, all_itrs = [], []
-        for test_subj in subjects:
+        train_set = TorchBETADataset(subjects=train_subjs,
+                                     data_root=args.beta_data_root,
+                                     pick_channels=args.pick_channels)
+        test_set = TorchBETADataset(subjects=[test_subj],
+                                    data_root=args.beta_data_root,
+                                    pick_channels=args.pick_channels)
 
-            # train / test split (Leave-One-Subject-Out)
-            train_dataset = ConcatDataset([
-                BETADataset(
-                    npz_file=os.path.join(args.beta_data_root, f"S{s}.npz"),
-                    pick_channels=args.pick_channels,
-                )
-                for s in subjects if s != test_subj
-            ])
-            test_dataset = BETADataset(
-                npz_file=os.path.join(args.beta_data_root, f"S{test_subj}.npz"),
-                pick_channels=args.pick_channels,
-            )
+        n_channels = train_set.C
+        n_samples = train_set.T
+        n_classes = len(np.unique(train_set.labels))
+        sfreq = train_set.bs.srate if hasattr(train_set.bs, "srate") else train_set.bs.srate
+        trial_time = n_samples / sfreq
 
-            n_channels = train_dataset.datasets[0].C
-            n_samples = train_dataset.datasets[0].T
-            n_classes = train_dataset.datasets[0].n_classes
-            ch_names = train_dataset.datasets[0].ch_names
-            sfreq = train_dataset.datasets[0].sfreq
-            trial_time = n_samples / sfreq  # 250 / 250 = 1.0s
-            # freq = list(train_dataset.datasets[0].freq)
-            # phase = list(train_dataset.datasets[0].phase)
+        print(f"Train {len(train_set)}, Test {len(test_set)}, C={n_channels}, T={n_samples}")
 
-            print(f"\n[INFO] LOOCV Test Subject: {test_subj}")
-            print(f"[INFO] Dataset: {args.dataset}")
-            print(f"[INFO] Subjects: {args.subjects}")
-            print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-            print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
-            print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+        stim_branch = StimulusBranchWithPhase(T=n_samples, sfreq=sfreq,
+                                              hidden_dim=args.d_query,
+                                              n_harmonics=3).to(device)
+        temp_branch = TemplateBranch(n_bands=8, n_features=32,
+                                     n_channels=n_channels,
+                                     n_samples=n_samples,
+                                     n_classes=n_classes,
+                                     D_temp=args.d_query).to(device)
+        dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
+                                  d_query=args.d_query,
+                                  d_model=args.d_model,
+                                  num_heads=4,
+                                  proj_dim=n_classes).to(device)
 
-            eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-            stim_branch = StimulusBranchWithPhase(T=n_samples,
-                                                  sfreq=sfreq,
-                                                  hidden_dim=args.d_query,
-                                                  n_harmonics=3).to(device)
-            temp_branch = TemplateBranch(n_bands=8, n_features=32,
-                                         n_channels=n_channels,
-                                         n_samples=n_samples,
-                                         n_classes=n_classes,
-                                         D_temp=args.d_query).to(device)
-            dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
-                                      d_query=args.d_query,
-                                      d_model=args.d_model,
-                                      num_heads=4,
-                                      proj_dim=n_classes).to(device)
+        optimizer = optim.Adam(list(eeg_branch.parameters()) +
+                               list(stim_branch.parameters()) +
+                               list(temp_branch.parameters()) +
+                               list(dual_attn.parameters()),
+                               lr=args.lr, weight_decay=1e-4)
+        criterion = nn.CrossEntropyLoss()
 
-            print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
+                                                    train_loader, optimizer, criterion, device)
+            test_loss, test_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
+                                                test_loader, criterion, device,
+                                                n_classes=n_classes, trial_time=trial_time)
+            print(f"Epoch {epoch:03d} | Train Acc {train_acc:.4f} | Test Acc {test_acc:.4f}")
 
-            params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-                     list(temp_branch.parameters()) + list(dual_attn.parameters())
+        all_accs.append(test_acc)
+        if itr is not None:
+            all_itrs.append(itr)
 
-            optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-            ce_criterion = nn.CrossEntropyLoss()
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-
-            # Train Loop
-            for epoch in range(1, args.epochs + 1):
-                train_loss, train_acc = train_one_epoch(
-                    eeg_branch, stim_branch, temp_branch, dual_attn,
-                    train_loader, optimizer, ce_criterion, device,
-                    accumulation_steps=args.accumulation_steps
-                )
-                test_loss, test_acc, itr = evaluate(
-                    eeg_branch, stim_branch, temp_branch, dual_attn,
-                    test_loader, ce_criterion, device,
-                    n_classes=n_classes, trial_time=trial_time
-                )
-                scheduler.step()
-
-                # TensorBoard logging
-                writer.add_scalar(f"Subject{test_subj}/Train/Loss", train_loss, epoch)
-                writer.add_scalar(f"Subject{test_subj}/Train/Acc", train_acc, epoch)
-                writer.add_scalar(f"Subject{test_subj}/Test/Loss", test_loss, epoch)
-                writer.add_scalar(f"Subject{test_subj}/Test/Acc", test_acc, epoch)
-                if itr is not None:
-                    writer.add_scalar(f"Subject{test_subj}/Test/ITR", itr, epoch)
-
-                print(f"\n[Epoch {epoch:03d}] "
-                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
-                      f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}", end="")
-                if itr is not None:
-                    print(f" | ITR: {itr:.2f} bits/min")
-                else:
-                    print()
-
-            # Save model per subject
-            save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-            os.makedirs(save_dir, exist_ok=True)
-            save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
-            torch.save({
-                "eeg_branch": eeg_branch.state_dict(),
-                "stim_branch": stim_branch.state_dict(),
-                "temp_branch": temp_branch.state_dict(),
-                "dual_attn": dual_attn.state_dict(),
-                "optimizer": optimizer.state_dict()
-            }, save_path)
-            print(f"[Save] Model saved to {save_path}")
-
-            all_accs.append(test_acc)
-            if itr is not None:
-                all_itrs.append(itr)
-
-        print("\n========== Final LOOCV Result ==========")
-        print(f"Mean Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
-        if len(all_itrs) > 0:
-            print(f"Mean ITR: {np.mean(all_itrs):.2f} ± {np.std(all_itrs):.2f}")
-
-    else:
-        raise ValueError("Now only BETA + LOOCV mode is supported in this script.")
+    print("\n=== Final LOSO ===")
+    print(f"Mean Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
+    if all_itrs:
+        print(f"Mean ITR: {np.mean(all_itrs):.2f} ± {np.std(all_itrs):.2f}")
 
     writer.close()
 
@@ -301,25 +252,18 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="BETA", choices=["BETA"])
-    parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_beta")
-    parser.add_argument("--subjects", type=str, default="16-50", help=" '1,2,3', '1-10', 'all' ")
+    parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
+    parser.add_argument("--subjects", type=str, default="16-50", help="e.g. '16-50' or '16,17,18'")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ",
-                        help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ")
     parser.add_argument("--encoder", type=str, default="EEGNet")
-    parser.add_argument("--accumulation_steps", type=int, default=4,
-                        help="Number of steps to accumulate gradients before optimizer step")
-    args = parser.parse_args()
 
-    if isinstance(args.pick_channels, str):
-        if args.pick_channels.lower() == "all":
-            args.pick_channels = "all"
-        else:
-            cleaned = args.pick_channels.strip("[]")
-            args.pick_channels = [ch.strip().strip("'").strip('"') for ch in cleaned.split(",")]
+    args = parser.parse_args()
+    if isinstance(args.pick_channels, str) and args.pick_channels.lower() != "all":
+        args.pick_channels = [ch.strip() for ch in args.pick_channels.split(",")]
 
     main(args)

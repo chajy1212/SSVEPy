@@ -8,6 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 from moabb.paradigms import SSVEP
 from moabb.datasets import Nakanishi2015
 from moabb.datasets import Lee2019_SSVEP
+from SSVEPAnalysisToolbox.datasets.betadataset import BETADataset
 
 
 class ARDataset(Dataset):
@@ -50,7 +51,7 @@ class ARDataset(Dataset):
         # Task name
         task = self.tasks[idx]
 
-        return eeg, class_label, task
+        return eeg, class_label, freq_val, phase, task
 
 
 class Nakanishi2015Dataset(Dataset):
@@ -166,45 +167,66 @@ class Lee2019Dataset(Dataset):
         return eeg, label
 
 
-class BETADataset(Dataset):
-    def __init__(self, npz_file, pick_channels="all"):
-        data = np.load(npz_file, allow_pickle=True)
+class TorchBETADataset(Dataset):
+    def __init__(self, subjects, data_root, pick_channels="all"):
+        """
+        subjects: list of subject numbers (e.g. [16,17,...])
+        data_root: path to folder containing the .mat files / BETA data
+        pick_channels: “all” 또는 채널 이름 리스트
+        """
+        # Initialize toolbox dataset
+        # The BETADataset constructor takes `path` (root) and optional support path etc.
+        self.bs = BETADataset(path=data_root)
 
-        self.epochs = data["epochs"].astype(np.float32)         # (N, C, T)
-        self.labels = np.array(data["labels"], dtype=int)       # (N,)
-        self.freqs = np.array(data["freqs"], dtype=float)       # (N,)
-        self.phases = np.array(data["phases"], dtype=float)     # (N,)
-        self.blocks = np.array(data["blocks"], dtype=int)       # (N,)
-        self.sfreq = float(data["sfreq"])
-        self.ch_names = [str(ch) for ch in data["ch_names"]]
+        self.subjects = subjects
+        self.pick_channels = pick_channels
 
-        # pick_channels
-        if isinstance(pick_channels, str):
-            if pick_channels.lower() == "all":
-                pick_channels = "all"
-            else:
-                pick_channels = [ch.strip() for ch in pick_channels.split(",")]
-        elif isinstance(pick_channels, (list, tuple, np.ndarray)):
-            pick_channels = [str(ch).strip() for ch in pick_channels]
+        # Build index map of (sub_idx, block, trial)
+        self.index_map = []
+        for s in subjects:
+            sub_idx = s - 1  # toolbox uses 0-based indexing internally
+            data = self.bs.get_sub_data(sub_idx)  # shape (block, stimulus, ch, samples)
+            B, K, C, T = data.shape
+            for b in range(B):
+                for k in range(K):
+                    self.index_map.append((sub_idx, b, k))
 
+        # Preload epochs, labels, freqs, phases, blocks
+        epochs = []
+        labels = []
+        freqs = []
+        phases = []
+        blocks = []
+        stim_freqs = self.bs.stim_info["freqs"]
+        stim_phases = self.bs.stim_info["phases"]
+        block_num = self.bs.block_num
+
+        for (sub_idx, b, k) in self.index_map:
+            data = self.bs.get_sub_data(sub_idx)
+            sig = data[b, k, :, :]  # shape (C, T)
+            epochs.append(sig.astype(float))
+            labels.append(k)
+            freqs.append(stim_freqs[k])
+            phases.append(stim_phases[k])
+            # global block index: you can choose whatever scheme; here:
+            blocks.append(b + sub_idx * block_num)
+
+        import numpy as np
+        self.epochs = np.stack(epochs, axis=0)    # (N, C, T)
+        self.labels = np.array(labels, dtype=int)
+        self.freqs = np.array(freqs, dtype=float)
+        self.phases = np.array(phases, dtype=float)
+        self.blocks = np.array(blocks, dtype=int)
+
+        # apply pick_channels if not all
         if pick_channels != "all":
-            name_map = {c: i for i, c in enumerate(self.ch_names)}
+            name_map = {ch: i for i, ch in enumerate(self.bs.channels)}
             picks = [name_map[ch] for ch in pick_channels if ch in name_map]
-
             if len(picks) == 0:
-                raise ValueError(
-                    f"[ERROR] No valid channels found in pick_channels={pick_channels}\n"
-                    f"[INFO] Available channels={self.ch_names}"
-                )
-
+                raise ValueError(f"No valid channel in pick_channels {pick_channels}")
             self.epochs = self.epochs[:, picks, :]
-            self.ch_names = [self.ch_names[i] for i in picks]
 
         self.N, self.C, self.T = self.epochs.shape
-        self.n_classes = len(np.unique(self.labels))
-
-        print(f"[INFO] Loaded {npz_file}, shape={self.epochs.shape}, "
-              f"samples={self.N}, classes={self.n_classes}, channels={self.ch_names}")
 
     def __len__(self):
         return self.N
@@ -215,7 +237,5 @@ class BETADataset(Dataset):
         freq = float(self.freqs[idx])
         phase = float(self.phases[idx])
         block = int(self.blocks[idx])
-
         eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
-
         return eeg, lbl, freq, phase, block

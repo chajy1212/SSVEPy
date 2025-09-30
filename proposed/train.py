@@ -10,22 +10,8 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, ConcatDataset, random_split, Subset
 
 from dual_attention import DualAttention
-from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset, BETADataset
+from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
 from branches import EEGBranch, StimulusBranch, StimulusBranchWithPhase, TemplateBranch
-
-
-def block_split_beta(dataset, train_blocks=[0,1,2], test_blocks=[3]):
-    """
-    Block-aware split for BETA dataset.
-    dataset.blocks shape = (N,)
-    """
-    if dataset.blocks is None:
-        raise ValueError("Dataset has no block information. Did you preprocess with blocks?")
-
-    train_idx = [i for i, b in enumerate(dataset.blocks) if b in train_blocks]
-    test_idx = [i for i, b in enumerate(dataset.blocks) if b in test_blocks]
-
-    return Subset(dataset, train_idx), Subset(dataset, test_idx)
 
 
 # ===== Reproducibility =====
@@ -76,8 +62,6 @@ def parse_subjects(subjects_arg, dataset_name=""):
             subjects = list(range(1, 11))  # 1 ~ 10
         elif dataset_name == "Lee2019":
             subjects = list(range(1, 55))  # 1 ~ 54
-        elif dataset_name == "BETA":
-            subjects = list(range(1, 71))  # 1 ~ 70
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -109,16 +93,18 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for batch in dataloader:
         if with_task:
-            eeg, label, _ = batch
+            eeg, label, freq, phase, task = batch
         else:
-            eeg, label = batch
+            eeg, label, freq, phase, _ = batch
+
         eeg, label = eeg.to(device), label.to(device)
+        freq, phase = freq.to(device), phase.to(device)
 
         optimizer.zero_grad()
 
         # Forward
         eeg_feat = eeg_branch(eeg)  # (B, D_eeg)
-        stim_feat = stim_branch(label)  # (B, D_query)
+        stim_feat = stim_branch(freq, phase)  # (B, D_query)
         temp_feat = temp_branch(eeg, label)  # (B, D_query)
         logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
 
@@ -159,14 +145,15 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for batch in dataloader:
         if with_task:
-            eeg, label, task = batch
+            eeg, label, freq, phase, task = batch
         else:
-            eeg, label = batch
-            task = None
+            eeg, label, freq, phase, _ = batch
+
         eeg, label = eeg.to(device), label.to(device)
+        freq, phase = freq.to(device), phase.to(device)
 
         eeg_feat = eeg_branch(eeg)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
         logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
@@ -273,48 +260,6 @@ def main(args):
         freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
         phases = None
 
-    elif args.dataset == "BETA":
-        subjects = parse_subjects(args.subjects, "BETA")
-
-        if len(subjects) == 1:  # subject-dependent (한 명만 지정)
-            s = subjects[0]
-            dataset = BETADataset(npz_file=os.path.join(args.beta_data_root, f"S{s}.npz"),
-                                  pick_channels=args.pick_channels)
-
-            train_dataset, test_dataset = block_split_beta(dataset, train_blocks=[0,1,2], test_blocks=[3])
-
-            n_channels = dataset.C
-            n_samples = dataset.T
-            n_classes = dataset.n_classes
-            ch_names = dataset.ch_names
-            sfreq = dataset.sfreq
-            trial_time = n_samples / sfreq
-            with_task = False
-            freqs = list(dataset.freqs)
-            phases = list(dataset.phases)
-
-        else:  # 여러 명(all 등) 선택한 경우 → 합쳐서 학습
-            all_datasets = [BETADataset(npz_file=os.path.join(args.beta_data_root, f"S{s}.npz"),
-                                        pick_channels=args.pick_channels) for s in subjects]
-
-            full_dataset = ConcatDataset(all_datasets)
-
-            N_total = len(full_dataset);
-            N_train = int(0.8 * N_total)
-            train_dataset, test_dataset = random_split(full_dataset, [N_train, N_total-N_train])
-
-            # 대표 subject 하나에서 메타데이터 가져오기
-            ref_ds = all_datasets[0]
-            n_channels = ref_ds.C
-            n_samples = ref_ds.T
-            n_classes = ref_ds.n_classes
-            ch_names = ref_ds.ch_names
-            sfreq = ref_ds.sfreq
-            trial_time = n_samples / sfreq
-            with_task = False
-            freqs = list(ref_ds.freqs)
-            phases = list(ref_ds.phases)
-
     else:
         raise ValueError("Unsupported dataset")
 
@@ -333,10 +278,8 @@ def main(args):
     else:
         raise ValueError(f"Unsupported encoder: {args.encoder}")
 
-    if args.dataset in ["BETA", "AR"]:
-        stim_branch = StimulusBranchWithPhase(freqs=freqs,
-                                              phases=phases,
-                                              T=n_samples,
+    if args.dataset == "AR":
+        stim_branch = StimulusBranchWithPhase(T=n_samples,
                                               sfreq=sfreq,
                                               hidden_dim=args.d_query,
                                               n_harmonics=3).to(device)
@@ -419,9 +362,8 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019", "BETA"])
+    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
-    parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_beta")
     parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=300)
