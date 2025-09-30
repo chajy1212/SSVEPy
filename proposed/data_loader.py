@@ -170,10 +170,11 @@ class BETADataset(Dataset):
     def __init__(self, npz_file, pick_channels="all"):
         data = np.load(npz_file, allow_pickle=True)
 
-        self.epochs = data["epochs"].astype(np.float32)   # (N, C, T)
-        self.labels = np.array(data["labels"], dtype=int)
-        self.freqs = np.array(data["freqs"], dtype=float)
-        self.phases = np.array(data["phases"], dtype=float)
+        self.epochs = data["epochs"].astype(np.float32)         # (N, C, T)
+        self.labels = np.array(data["labels"], dtype=int)       # (N,)
+        self.freqs = np.array(data["freqs"], dtype=float)       # (N,)
+        self.phases = np.array(data["phases"], dtype=float)     # (N,)
+        self.blocks = np.array(data["blocks"], dtype=int)       # (N,)
         self.sfreq = float(data["sfreq"])
         self.ch_names = [str(ch) for ch in data["ch_names"]]
 
@@ -202,7 +203,8 @@ class BETADataset(Dataset):
         self.N, self.C, self.T = self.epochs.shape
         self.n_classes = len(np.unique(self.labels))
 
-        print(f"[INFO] Loaded {npz_file}, shape={self.epochs.shape}, classes={self.n_classes}, channels={self.ch_names}")
+        print(f"[INFO] Loaded {npz_file}, shape={self.epochs.shape}, "
+              f"samples={self.N}, classes={self.n_classes}, channels={self.ch_names}")
 
     def __len__(self):
         return self.N
@@ -210,5 +212,10 @@ class BETADataset(Dataset):
     def __getitem__(self, idx):
         sig = self.epochs[idx]  # (C, T)
         lbl = int(self.labels[idx])
+        freq = float(self.freqs[idx])
+        phase = float(self.phases[idx])
+        block = int(self.blocks[idx])
+
         eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
-        return eeg, lbl
+
+        return eeg, lbl, freq, phase, block

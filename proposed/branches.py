@@ -64,15 +64,13 @@ class StimulusBranch(nn.Module):
 class StimulusBranchWithPhase(nn.Module):
     """
     Stimulus branch using StimulusEncoder with subject-specific phase correction.
-    Input : labels (B,)
+    Input : labels (B,), phases (B,)
     Output: (B, D_stim)
     """
-    def __init__(self, freqs, phases, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=64):
+    def __init__(self, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=64):
         super().__init__()
-        self.freqs = torch.tensor(freqs, dtype=torch.float32)  # (n_classes,)
-        self.phases = torch.tensor(phases, dtype=torch.float32)  # (n_classes,)
         self.T = T
-        self.sfreq = sfreq
+        self.sfreq = float(sfreq)
         self.n_harmonics = n_harmonics
 
         # Stimulus encoder
@@ -85,36 +83,36 @@ class StimulusBranchWithPhase(nn.Module):
         )
         self.out_dim = out_dim
 
-    def forward(self, labels):
+        # Precompute time vector
+        t = torch.arange(self.T, dtype=torch.float32) / np.float32(self.sfreq)
+        self.register_buffer("t", t)  # (T,)
+
+    def forward(self, freqs, phases):
         """
         Args:
-            labels: (B,) class indices
+            freqs:  (B,) frequencies (Hz)
+            phases: (B,) phases (radian)
         Returns:
             feat: (B, out_dim)
         """
-        device = labels.device
-        freqs = self.freqs.to(device)
-        phases = self.phases.to(device)
-        B = labels.size(0)
-
-        # time vector
-        t = torch.arange(self.T, dtype=torch.float32, device=device) / self.sfreq
+        device = freqs.device
+        B = freqs.size(0)
+        t = self.t.to(device).unsqueeze(0)  # (1, T)
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            f = freqs[labels]                   # (B,)
-            phi = phases[labels] * 2 * np.pi    # (B,) convert cycles → rad
-        
-            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
-            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0) + phi.unsqueeze(1))
-
+            # add phase shift per harmonic
+            phase_term = phases.unsqueeze(1)  # (B, 1)
+            sin_h = torch.sin(2 * np.pi * h * freqs.unsqueeze(1) * t + phase_term)
+            cos_h = torch.cos(2 * np.pi * h * freqs.unsqueeze(1) * t + phase_term)
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
-        stim_harm = torch.stack(harmonics, dim=-1)  # (B, T, 2*n_harmonics)
-        feat = self.encoder(stim_harm)              # (B, hidden_dim)
-        feat = self.proj(feat)                      # (B, out_dim)
+        # (B, T, 2*n_harmonics)
+        stim_harm = torch.stack(harmonics, dim=-1).float()  # (B, T, 2*n_harmonics)
 
+        feat = self.encoder(stim_harm)  # (B, hidden_dim)
+        feat = self.proj(feat)  # (B, out_dim)
         return feat
 
 
