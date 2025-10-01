@@ -297,7 +297,7 @@ def main(args):
 
             print(f"\n[Save] Epoch {best_epoch} → Best model"
                   f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
-            print(f"Best Task Acc: {best_task_acc}")
+            print(f"Best Task Acc: {best_task_acc:.5f}")
 
     writer.close()
 
