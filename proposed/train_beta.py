@@ -53,7 +53,6 @@ def compute_itr(acc, n_classes, trial_time):
 def parse_subjects(subjects_arg, dataset_name=""):
     """
     subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
-    dataset_name: "AR", "Nakanishi2015", "Lee2019"
     """
     if subjects_arg.lower() == "all":
         if dataset_name == "BETA":
@@ -124,8 +123,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device,
-             n_classes=None, trial_time=None):
+             dataloader, ce_criterion, device, n_classes, trial_time):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -156,9 +154,8 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
 
-    itr = None
-    if n_classes is not None and trial_time is not None:
-        itr = compute_itr(acc, n_classes, trial_time)
+    # ITR
+    itr = compute_itr(acc, n_classes, trial_time)
 
     return avg_loss, acc, itr
 
@@ -168,25 +165,23 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # parse subjects
-    parts = args.subjects.split("-")
-    if len(parts) == 2:
-        subjects = list(range(int(parts[0]), int(parts[1]) + 1))
-    else:
-        subjects = [int(s) for s in args.subjects.split(",")]
-
-    # Channel tag + TensorBoard writer
+    # Channel tag
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
         ch_tag = "".join(args.pick_channels)
-    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
 
     all_accs, all_itrs = [], []
+
+    subjects = parse_subjects(args.subjects, "BETA")
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
 
+        # per-subject TensorBoard writer
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/BETA_S{test_subj}_EEGNet_{ch_tag}")
+
+        # Dataset
         train_set = TorchBETADataset(subjects=train_subjs,
                                      data_root=args.beta_data_root,
                                      pick_channels=args.pick_channels)
@@ -200,8 +195,8 @@ def main(args):
         sfreq = train_set.bs.srate
         trial_time = n_samples / sfreq
 
-        print(f"[INFO] Dataset: {args.dataset}")
-        print(f"[INFO] Subjects used ({len(args.subjects)}): {args.subjects}")
+        print(f"[INFO] Dataset: BETA")
+        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
         print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -209,6 +204,7 @@ def main(args):
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
+        # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
         stim_branch = StimulusBranchWithPhase(T=n_samples, sfreq=sfreq,
                                               hidden_dim=args.d_query,
@@ -232,60 +228,71 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+        # best record
+        best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+
         # Train Loop
         for epoch in range(1, args.epochs + 1):
-            train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                    train_loader, optimizer, criterion, device)
-            test_loss, test_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-                                                test_loader, criterion, device,
-                                                n_classes=n_classes, trial_time=trial_time)
+            train_loss, train_acc = train_one_epoch(
+                eeg_branch, stim_branch, temp_branch, dual_attn,
+                train_loader, optimizer, criterion, device
+            )
+            test_loss, test_acc, itr = evaluate(
+                eeg_branch, stim_branch, temp_branch, dual_attn,
+                test_loader, criterion, device,
+                n_classes=n_classes, trial_time=trial_time
+            )
 
             scheduler.step()
 
             print(f"\n[Epoch {epoch:03d}] "
-                  f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
-                  f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}", end="")
-            if itr is not None:
-                print(f" | ITR: {itr:.2f} bits/min")
-            else:
-                print()
+                  f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+                  f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+                  f"ITR: {itr:.4f} bits/min")
 
             # TensorBoard logging
             writer.add_scalar("Loss/Train", train_loss, epoch)
             writer.add_scalar("Loss/Test", test_loss, epoch)
             writer.add_scalar("Accuracy/Train", train_acc, epoch)
             writer.add_scalar("Accuracy/Test", test_acc, epoch)
-            if itr is not None:
-                writer.add_scalar("ITR/Test", itr, epoch)
+            writer.add_scalar("ITR/Test", itr, epoch)
 
-        all_accs.append(test_acc)
-        if itr is not None:
-            all_itrs.append(itr)
+            # update best record
+            if test_acc > best_acc:
+                best_acc, best_itr, best_epoch = test_acc, (itr or 0.0), epoch
 
-    # Save Model
-    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-    save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
+        writer.close()
 
-    torch.save({
-        "eeg_branch": eeg_branch.state_dict(),
-        "stim_branch": stim_branch.state_dict(),
-        "temp_branch": temp_branch.state_dict(),
-        "dual_attn": dual_attn.state_dict(),
-        "optimizer": optimizer.state_dict()
-    }, save_path)
-    print(f"\n[Save] Model saved to {save_path}")
+        # Save Model
+        save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+        save_path = os.path.join(save_dir, f"BETA_S{test_subj}_EEGNet_{ch_tag}.pth")
 
+        torch.save({
+            "epoch": best_epoch,
+            "best_acc": best_acc,
+            "best_itr": best_itr,
+            "eeg_branch": eeg_branch.state_dict(),
+            "stim_branch": stim_branch.state_dict(),
+            "temp_branch": temp_branch.state_dict(),
+            "dual_attn": dual_attn.state_dict(),
+            "optimizer": optimizer.state_dict()
+        }, save_path)
+
+        print(f"\n[Save] Epoch {best_epoch} → Best model"
+              f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+
+        all_accs.append(best_acc)
+        all_itrs.append(best_itr)
+
+    # After loop → LOSO summary
     print("\n[Final LOSO]")
-    print(f"Mean Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
+    print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     if all_itrs:
-        print(f"Mean ITR: {np.mean(all_itrs):.2f} ± {np.std(all_itrs):.2f}")
-
-    writer.close()
+        print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="BETA", choices=["BETA"])
     parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
     parser.add_argument("--subjects", type=str, default="16-70", help="e.g. '16-50' or '16,17,18'")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -294,7 +301,6 @@ if __name__ == '__main__':
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ", help=" 'all' ")
-    parser.add_argument("--encoder", type=str, default="EEGNet")
     args = parser.parse_args()
 
     # Parse channel selection

@@ -7,11 +7,11 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, ConcatDataset, random_split, Subset
+from torch.utils.data import DataLoader, ConcatDataset
 
+from data_loader import ARDataset
 from dual_attention import DualAttention
-from data_loader import ARDataset, Nakanishi2015Dataset, Lee2019Dataset
-from branches import EEGBranch, StimulusBranch, StimulusBranchWithPhase, TemplateBranch
+from branches import EEGBranch, StimulusBranchWithPhase, TemplateBranch
 
 
 # ===== Reproducibility =====
@@ -53,15 +53,10 @@ def compute_itr(acc, n_classes, trial_time):
 def parse_subjects(subjects_arg, dataset_name=""):
     """
     subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
-    dataset_name: "AR", "Nakanishi2015", "Lee2019"
     """
     if subjects_arg.lower() == "all":
         if dataset_name == "AR":
             subjects = list(range(1, 25))  # 1 ~ 24
-        elif dataset_name == "Nakanishi2015":
-            subjects = list(range(1, 11))  # 1 ~ 10
-        elif dataset_name == "Lee2019":
-            subjects = list(range(1, 55))  # 1 ~ 54
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -81,8 +76,7 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, ce_criterion,
-                    device, with_task=False):
+                    dataloader, optimizer, ce_criterion, device):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -91,26 +85,20 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for batch in dataloader:
-        if with_task:
-            eeg, label, freq, phase, task = batch
-        else:
-            eeg, label, freq, phase, _ = batch
-
+    for eeg, label, freq, phase, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         freq, phase = freq.to(device), phase.to(device)
 
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)  # (B, D_eeg)
-        stim_feat = stim_branch(freq, phase)  # (B, D_query)
-        temp_feat = temp_branch(eeg, label)  # (B, D_query)
-        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
+        eeg_feat = eeg_branch(eeg)                                   # (B, D_eeg)
+        stim_feat = stim_branch(freq, phase)                         # (B, D_query)
+        temp_feat = temp_branch(eeg, label)                          # (B, D_query)
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
 
         # CE loss
         loss = ce_criterion(logits, label)
-
         loss.backward()
         optimizer.step()
 
@@ -132,8 +120,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device,
-             with_task=False, n_classes=None, trial_time=None):
+             dataloader, ce_criterion, device, n_classes, trial_time):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -143,19 +130,14 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     total_loss = 0.0
     task_correct, task_total = {}, {}
 
-    for batch in dataloader:
-        if with_task:
-            eeg, label, freq, phase, task = batch
-        else:
-            eeg, label, freq, phase, _ = batch
-
+    for eeg, label, freq, phase, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         freq, phase = freq.to(device), phase.to(device)
 
         eeg_feat = eeg_branch(eeg)
         stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
-        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
         total_loss += loss.item() * label.size(0)
@@ -164,26 +146,23 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         all_preds.append(pred.cpu())
         all_labels.append(label.cpu())
 
-        if with_task:
-            for t, p, l in zip(task, pred.cpu(), label.cpu()):
-                t = str(t)
-                task_correct.setdefault(t, 0)
-                task_total.setdefault(t, 0)
-                task_correct[t] += int(p == l)
-                task_total[t] += 1
+        # Task accuracy
+        for t, p, l in zip(task, pred.cpu(), label.cpu()):
+            t = str(t)
+            task_correct.setdefault(t, 0)
+            task_total.setdefault(t, 0)
+            task_correct[t] += int(p == l)
+            task_total[t] += 1
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
     avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
-
-    task_acc = {t: task_correct[t] / task_total[t] for t in task_total} if with_task else None
+    task_acc = {t: task_correct[t] / task_total[t] for t in task_total}
 
     # ITR
-    itr = None
-    if n_classes is not None and trial_time is not None:
-        itr = compute_itr(acc, n_classes, trial_time)
+    itr = compute_itr(acc, n_classes, trial_time)
 
     return avg_loss, acc, task_acc, itr
 
@@ -193,78 +172,39 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Channel tag + TensorBoard writer
+    # Channel tag
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
         ch_tag = "".join(args.pick_channels)
-    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}")
+
+    # TensorBoard writer
+    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/AR_{args.subjects}_EEGNet_{ch_tag}")
+
+    all_train_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-01.npz")))
+    all_test_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-02.npz")))
+
+    # Subject split
+    if args.subjects.lower() != "all":
+        subjects = parse_subjects(args.subjects, "AR")
+        train_files = [f for f in all_train_files if any(f"sub-{s:03d}_" in f for s in subjects)]
+        test_files = [f for f in all_test_files if any(f"sub-{s:03d}_" in f for s in subjects)]
+    else:
+        train_files, test_files = all_train_files, all_test_files
 
     # Dataset
-    if args.dataset == "AR":
-        all_train_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-01.npz")))
-        all_test_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*ses-02.npz")))
+    train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
+    test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
 
-        if args.subjects.lower() != "all":
-            subjects = parse_subjects(args.subjects, "AR")
-            train_files = [f for f in all_train_files if any(f"sub-{s:03d}_" in f for s in subjects)]
-            test_files = [f for f in all_test_files if any(f"sub-{s:03d}_" in f for s in subjects)]
-        else:
-            train_files, test_files = all_train_files, all_test_files
+    n_channels = train_dataset.datasets[0].C
+    n_samples = train_dataset.datasets[0].T
+    n_classes = train_dataset.datasets[0].n_classes
+    ch_names = train_dataset.datasets[0].ch_names
+    sfreq = train_dataset.datasets[0].sfreq
+    trial_time = n_samples / sfreq
 
-        train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
-        test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
-
-        n_channels = train_dataset.datasets[0].C
-        n_samples = train_dataset.datasets[0].T
-        n_classes = train_dataset.datasets[0].n_classes
-        ch_names = train_dataset.datasets[0].ch_names
-        sfreq = train_dataset.datasets[0].sfreq
-        trial_time = n_samples / sfreq
-        with_task = True
-
-        freqs = [train_dataset.datasets[0].class2freq[i] for i in range(n_classes)]  # class index → Hz
-        phases = list(train_dataset.datasets[0].phases)
-
-    elif args.dataset == "Nakanishi2015":
-        subjects = parse_subjects(args.subjects, "Nakanishi2015")
-        dataset = Nakanishi2015Dataset(subjects=subjects, pick_channels=args.pick_channels)
-        N = len(dataset)
-        N_train = int(0.8 * N)
-        train_dataset, test_dataset = random_split(dataset, [N_train, N - N_train])
-
-        n_channels = dataset.C
-        n_samples = dataset.T
-        n_classes = dataset.n_classes
-        ch_names = dataset.ch_names
-        sfreq = dataset.sfreq
-        trial_time = n_samples / sfreq
-        with_task = False
-
-        freqs = list(dataset.freqs)  # label index → Hz
-        phases = None
-
-    elif args.dataset == "Lee2019":
-        subjects = parse_subjects(args.subjects, "Lee2019")
-        train_dataset = Lee2019Dataset(subjects=subjects, train=True, pick_channels=args.pick_channels)
-        test_dataset = Lee2019Dataset(subjects=subjects, train=False, pick_channels=args.pick_channels)
-
-        n_channels = train_dataset.C
-        n_samples = train_dataset.T
-        n_classes = train_dataset.n_classes
-        ch_names = train_dataset.ch_names
-        sfreq = train_dataset.sfreq
-        trial_time = n_samples / sfreq
-        with_task = False
-
-        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
-        phases = None
-
-    else:
-        raise ValueError("Unsupported dataset")
-
-    print(f"[INFO] Dataset: {args.dataset}")
-    print(f"[INFO] Subjects: {args.subjects}")
+    print(f"[INFO] Dataset: AR")
+    print(f"[INFO] Subjects used ({len(args.subjects)}): {args.subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
     print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -273,23 +213,11 @@ def main(args):
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
     # Model
-    if args.encoder == "EEGNet":
-        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-    else:
-        raise ValueError(f"Unsupported encoder: {args.encoder}")
-
-    if args.dataset == "AR":
-        stim_branch = StimulusBranchWithPhase(T=n_samples,
+    eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+    stim_branch = StimulusBranchWithPhase(T=n_samples,
                                               sfreq=sfreq,
                                               hidden_dim=args.d_query,
                                               n_harmonics=3).to(device)
-    else:
-        stim_branch = StimulusBranch(freqs=freqs,
-                                     T=n_samples,
-                                     sfreq=sfreq,
-                                     hidden_dim=args.d_query,
-                                     n_harmonics=3).to(device)
-
     temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                  n_channels=n_channels,
                                  n_samples=n_samples,
@@ -310,59 +238,72 @@ def main(args):
     ce_criterion = nn.CrossEntropyLoss()
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+    # best record
+    best_acc, best_itr, best_epoch, best_task_acc = 0.0, 0.0, 0, None
+
     # Train Loop
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(
             eeg_branch, stim_branch, temp_branch, dual_attn,
-            train_loader, optimizer, ce_criterion, device, with_task
+            train_loader, optimizer, ce_criterion, device
         )
         test_loss, test_acc, task_acc, itr = evaluate(
             eeg_branch, stim_branch, temp_branch, dual_attn,
-            test_loader, ce_criterion, device, with_task,
+            test_loader, ce_criterion, device,
             n_classes=n_classes, trial_time=trial_time
         )
 
         scheduler.step()
 
         print(f"\n[Epoch {epoch:03d}] "
-              f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
-              f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}", end="")
-        if itr is not None:
-            print(f" | ITR: {itr:.2f} bits/min")
-        else:
-            print()
+              f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+              f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+              f"ITR: {itr:.4f} bits/min")
 
-        if task_acc is not None:
-            for t, acc in task_acc.items():
-                print(f"   Task {t}: {acc:.4f}")
+        for t, acc in task_acc.items():
+            print(f"   Task {t}: {acc:.5f}")
 
         # TensorBoard logging
         writer.add_scalar("Loss/Train", train_loss, epoch)
         writer.add_scalar("Loss/Test", test_loss, epoch)
         writer.add_scalar("Accuracy/Train", train_acc, epoch)
         writer.add_scalar("Accuracy/Test", test_acc, epoch)
-        if itr is not None:
-            writer.add_scalar("ITR/Test", itr, epoch)
+        writer.add_scalar("ITR/Test", itr, epoch)
+        for t, acc in task_acc.items():
+            writer.add_scalar(f"TaskAcc/{t}", acc, epoch)
 
-    # Save Model
-    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-    save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
+        # update best record
+        if test_acc > best_acc:
+            best_acc = test_acc
+            best_itr = itr
+            best_epoch = epoch
+            best_task_acc = task_acc
 
-    torch.save({
-        "eeg_branch": eeg_branch.state_dict(),
-        "stim_branch": stim_branch.state_dict(),
-        "temp_branch": temp_branch.state_dict(),
-        "dual_attn": dual_attn.state_dict(),
-        "optimizer": optimizer.state_dict()
-    }, save_path)
-    print(f"\n[Save] Model saved to {save_path}")
+            # Save Model
+            save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+            save_path = os.path.join(save_dir, f"AR_{args.subjects}_EEGNet_{ch_tag}.pth")
+
+            torch.save({
+                "epoch": best_epoch,
+                "best_acc": best_acc,
+                "best_itr": best_itr,
+                "eeg_branch": eeg_branch.state_dict(),
+                "stim_branch": stim_branch.state_dict(),
+                "temp_branch": temp_branch.state_dict(),
+                "dual_attn": dual_attn.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "best_task_acc": best_task_acc
+            }, save_path)
+
+            print(f"\n[Save] Epoch {best_epoch} → Best model"
+                  f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+            print(f"Best Task Acc: {best_task_acc}")
 
     writer.close()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, default="AR", choices=["AR", "Nakanishi2015", "Lee2019"])
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
     parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
@@ -370,12 +311,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz",
-                        help="AR: PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz"
-                             "Nakanishi: PO3,PO4,PO7,PO8,POz,O1,O2,Oz"
-                             "Lee2019: P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz"
-                             " 'all' ")
-    parser.add_argument("--encoder", type=str, default="EEGNet")
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
     # Parse channel selection
