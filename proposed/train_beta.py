@@ -96,7 +96,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg)
         stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
-        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label) / accumulation_steps
         loss.backward()
@@ -141,7 +141,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg)
         stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
-        logits, pooled, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
         total_loss += loss.item() * label.size(0)
@@ -168,7 +168,7 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # parse subjects argument (ex: "16-50")
+    # parse subjects
     parts = args.subjects.split("-")
     if len(parts) == 2:
         subjects = list(range(int(parts[0]), int(parts[1]) + 1))
@@ -197,10 +197,14 @@ def main(args):
         n_channels = train_set.C
         n_samples = train_set.T
         n_classes = len(np.unique(train_set.labels))
-        sfreq = train_set.bs.srate if hasattr(train_set.bs, "srate") else train_set.bs.srate
+        sfreq = train_set.bs.srate
         trial_time = n_samples / sfreq
 
-        print(f"Train {len(train_set)}, Test {len(test_set)}, C={n_channels}, T={n_samples}")
+        print(f"[INFO] Dataset: {args.dataset}")
+        print(f"[INFO] Subjects: {args.subjects}")
+        print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
+        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
@@ -222,24 +226,54 @@ def main(args):
 
         print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-        optimizer = optim.Adam(list(eeg_branch.parameters()) +
-                               list(stim_branch.parameters()) +
-                               list(temp_branch.parameters()) +
-                               list(dual_attn.parameters()),
-                               lr=args.lr, weight_decay=1e-4)
+        params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
+                 list(temp_branch.parameters()) + list(dual_attn.parameters())
+        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+        # Train Loop
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc = train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                                                     train_loader, optimizer, criterion, device)
             test_loss, test_acc, itr = evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
                                                 test_loader, criterion, device,
                                                 n_classes=n_classes, trial_time=trial_time)
-            print(f"Epoch {epoch:03d} | Train Acc {train_acc:.4f} | Test Acc {test_acc:.4f}")
+
+            scheduler.step()
+
+            print(f"\n[Epoch {epoch:03d}] "
+                  f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} || "
+                  f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f}", end="")
+            if itr is not None:
+                print(f" | ITR: {itr:.2f} bits/min")
+            else:
+                print()
+
+            # TensorBoard logging
+            writer.add_scalar("Loss/Train", train_loss, epoch)
+            writer.add_scalar("Loss/Test", test_loss, epoch)
+            writer.add_scalar("Accuracy/Train", train_acc, epoch)
+            writer.add_scalar("Accuracy/Test", test_acc, epoch)
+            if itr is not None:
+                writer.add_scalar("ITR/Test", itr, epoch)
 
         all_accs.append(test_acc)
         if itr is not None:
             all_itrs.append(itr)
+
+    # Save Model
+    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+    save_path = os.path.join(save_dir, f"{args.dataset}_{args.subjects}_{args.encoder}_{ch_tag}.pth")
+
+    torch.save({
+        "eeg_branch": eeg_branch.state_dict(),
+        "stim_branch": stim_branch.state_dict(),
+        "temp_branch": temp_branch.state_dict(),
+        "dual_attn": dual_attn.state_dict(),
+        "optimizer": optimizer.state_dict()
+    }, save_path)
+    print(f"\n[Save] Model saved to {save_path}")
 
     print("\n=== Final LOSO ===")
     print(f"Mean Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
@@ -261,9 +295,14 @@ if __name__ == '__main__':
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ")
     parser.add_argument("--encoder", type=str, default="EEGNet")
-
     args = parser.parse_args()
-    if isinstance(args.pick_channels, str) and args.pick_channels.lower() != "all":
-        args.pick_channels = [ch.strip() for ch in args.pick_channels.split(",")]
+
+    # Parse channel selection
+    if isinstance(args.pick_channels, str):
+        if args.pick_channels.lower() == "all":
+            args.pick_channels = "all"
+        else:
+            cleaned = args.pick_channels.strip("[]")
+            args.pick_channels = [ch.strip().strip("'").strip('"') for ch in cleaned.split(",")]
 
     main(args)
