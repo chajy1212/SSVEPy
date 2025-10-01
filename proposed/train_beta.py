@@ -261,25 +261,25 @@ def main(args):
             if test_acc > best_acc:
                 best_acc, best_itr, best_epoch = test_acc, (itr or 0.0), epoch
 
+                # Save Model
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+                save_path = os.path.join(save_dir, f"BETA_S{test_subj}_EEGNet_{ch_tag}.pth")
+
+                torch.save({
+                    "epoch": best_epoch,
+                    "best_acc": best_acc,
+                    "best_itr": best_itr,
+                    "eeg_branch": eeg_branch.state_dict(),
+                    "stim_branch": stim_branch.state_dict(),
+                    "temp_branch": temp_branch.state_dict(),
+                    "dual_attn": dual_attn.state_dict(),
+                    "optimizer": optimizer.state_dict()
+                }, save_path)
+
+                print(f"\n[Save] Epoch {best_epoch} → Best model "
+                      f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+
         writer.close()
-
-        # Save Model
-        save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-        save_path = os.path.join(save_dir, f"BETA_S{test_subj}_EEGNet_{ch_tag}.pth")
-
-        torch.save({
-            "epoch": best_epoch,
-            "best_acc": best_acc,
-            "best_itr": best_itr,
-            "eeg_branch": eeg_branch.state_dict(),
-            "stim_branch": stim_branch.state_dict(),
-            "temp_branch": temp_branch.state_dict(),
-            "dual_attn": dual_attn.state_dict(),
-            "optimizer": optimizer.state_dict()
-        }, save_path)
-
-        print(f"\n[Save] Epoch {best_epoch} → Best model "
-              f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
