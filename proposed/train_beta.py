@@ -6,12 +6,12 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
+from data_loader import TorchBETADataset
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranchWithPhase, TemplateBranch
-from data_loader import TorchBETADataset
 
 
 # ===== Reproducibility =====
@@ -201,7 +201,7 @@ def main(args):
         trial_time = n_samples / sfreq
 
         print(f"[INFO] Dataset: {args.dataset}")
-        print(f"[INFO] Subjects: {args.subjects}")
+        print(f"[INFO] Subjects used ({len(args.subjects)}): {args.subjects}")
         print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -275,7 +275,7 @@ def main(args):
     }, save_path)
     print(f"\n[Save] Model saved to {save_path}")
 
-    print("\n=== Final LOSO ===")
+    print("\n[Final LOSO]")
     print(f"Mean Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
     if all_itrs:
         print(f"Mean ITR: {np.mean(all_itrs):.2f} ± {np.std(all_itrs):.2f}")
@@ -287,13 +287,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="BETA", choices=["BETA"])
     parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
-    parser.add_argument("--subjects", type=str, default="16-50", help="e.g. '16-50' or '16,17,18'")
+    parser.add_argument("--subjects", type=str, default="16-70", help="e.g. '16-50' or '16,17,18'")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ")
+    parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ", help=" 'all' ")
     parser.add_argument("--encoder", type=str, default="EEGNet")
     args = parser.parse_args()
 

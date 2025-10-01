@@ -366,11 +366,15 @@ if __name__ == '__main__':
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
     parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz",
+                        help="AR: PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz"
+                             "Nakanishi: PO3,PO4,PO7,PO8,POz,O1,O2,Oz"
+                             "Lee2019: P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz"
+                             " 'all' ")
     parser.add_argument("--encoder", type=str, default="EEGNet")
     args = parser.parse_args()
 
