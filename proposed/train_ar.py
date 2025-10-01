@@ -277,7 +277,7 @@ def main(args):
             best_acc = test_acc
             best_itr = itr
             best_epoch = epoch
-            best_task_acc = task_acc
+            best_task_acc = {t: round(a * 100, 2) for t, a in task_acc.items()}
 
             # Save Model
             save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
@@ -285,8 +285,8 @@ def main(args):
 
             torch.save({
                 "epoch": best_epoch,
-                "best_acc": best_acc,
-                "best_itr": best_itr,
+                "best_acc": round(best_acc * 100, 2),
+                "best_itr": round(best_itr, 2),
                 "eeg_branch": eeg_branch.state_dict(),
                 "stim_branch": stim_branch.state_dict(),
                 "temp_branch": temp_branch.state_dict(),
@@ -295,9 +295,11 @@ def main(args):
                 "best_task_acc": best_task_acc
             }, save_path)
 
-            print(f"\n[Save] Epoch {best_epoch} → Best model"
-                  f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
-            print(f"Best Task Acc: {best_task_acc:.5f}")
+            print(f"\n[Save] Epoch {best_epoch} → Best model "
+                  f"(Acc={best_acc*100:.2f}%, ITR={best_itr:.2f}) saved to {save_path}")
+
+            task_str = ", ".join([f"Task {t}: {a:.2f}%" for t, a in best_task_acc.items()])
+            print(f"Best Task Acc → {task_str}")
 
     writer.close()
 
@@ -305,7 +307,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
-    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)

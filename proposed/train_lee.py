@@ -258,8 +258,8 @@ def main(args):
 
             torch.save({
                 "epoch": best_epoch,
-                "best_acc": best_acc,
-                "best_itr": best_itr,
+                "best_acc": round(best_acc * 100, 2),
+                "best_itr": round(best_itr, 2),
                 "eeg_branch": eeg_branch.state_dict(),
                 "stim_branch": stim_branch.state_dict(),
                 "temp_branch": temp_branch.state_dict(),
@@ -267,15 +267,15 @@ def main(args):
                 "optimizer": optimizer.state_dict(),
             }, save_path)
 
-            print(f"\n[Save] Epoch {best_epoch} → Best model"
-                  f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+            print(f"\n[Save] Epoch {best_epoch} → Best model "
+                  f"(Acc={best_acc*100:.2f}%, ITR={best_itr:.2f}) saved to {save_path}")
 
     writer.close()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
