@@ -269,8 +269,8 @@ def main(args):
 
         torch.save({
             "epoch": best_epoch,
-            "best_acc": round(best_acc * 100, 2),
-            "best_itr": round(best_itr, 2),
+            "best_acc": best_acc,
+            "best_itr": best_itr,
             "eeg_branch": eeg_branch.state_dict(),
             "stim_branch": stim_branch.state_dict(),
             "temp_branch": temp_branch.state_dict(),
@@ -279,7 +279,7 @@ def main(args):
         }, save_path)
 
         print(f"\n[Save] Epoch {best_epoch} → Best model "
-              f"(Acc={best_acc*100:.2f}%, ITR={best_itr:.2f}) saved to {save_path}")
+              f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
