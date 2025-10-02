@@ -17,6 +17,7 @@ SSVEPy/
 │   ├── dual_attention.py       		# Dual Attention 모듈, EEG→Key/Value, Stimulus/Template→Query 결합
 │   ├── preprocess_AR.py        		# AR Dataset Raw EEG → .npz 변환 유틸 (All Channel)
 │   ├── preprocess_AR_occi.py  		    # AR Dataset Raw EEG → .npz 변환 유틸 (Occipital Channel)
+│   ├── simple_attention.py             # Simple Attention 모듈
 │   ├── stimulus.py             		# StimulusEncoder, 자극 reference 신호(sin/cos) latent feature 추출
 │   ├── train_ar.py                		# AR Dataset 전용 학습 파이프라인
 │   ├── train_beta.py               	# BETA Dataset 전용 학습 파이프라인
