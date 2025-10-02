@@ -180,8 +180,8 @@ def main(args):
         writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset split
-        train_set = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
+        train_set = Lee2019Dataset(subjects=train_subjs, pick_channels=args.pick_channels)
+        test_set = Lee2019Dataset(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = train_set.C
         n_samples = train_set.T
@@ -298,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
     args = parser.parse_args()
 
     # Parse channel selection

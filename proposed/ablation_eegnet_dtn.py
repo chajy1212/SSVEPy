@@ -173,19 +173,17 @@ def main(args):
         train_subjs = [s for s in subjects if s != test_subj]
 
         # per-subject TensorBoard writer
-        writer = SummaryWriter(
-            log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_dtn/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_dtn/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset split
-        train_set = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
+        train_set = Lee2019Dataset(subjects=train_subjs, pick_channels=args.pick_channels)
+        test_set = Lee2019Dataset(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = train_set.C
         n_samples = train_set.T
         n_classes = train_set.n_classes
         sfreq = train_set.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_set, "freqs", np.linspace(8, 15, n_classes)))
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
