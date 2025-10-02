@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import Lee2019Dataset
+from data_loader import Lee2019Dataset_LOSO
 from branches import EEGBranch, TemplateBranch
 from simple_attention import SimpleAttention_EEG_Template
 
@@ -176,8 +176,8 @@ def main(args):
         writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_dtn/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset split
-        train_set = Lee2019Dataset(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset(subjects=[test_subj], pick_channels=args.pick_channels)
+        train_set = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
+        test_set = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = train_set.C
         n_samples = train_set.T

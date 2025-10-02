@@ -187,7 +187,7 @@ def main(args):
     freqs = list(dataset.freqs)  # label index → Hz
 
     print(f"[INFO] Dataset: Nakanishi2015")
-    print(f"[INFO] Subjects used ({len(subjects)}): {args.subjects}")
+    print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
     print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")

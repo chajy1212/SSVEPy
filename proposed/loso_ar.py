@@ -182,9 +182,10 @@ def main(args):
         ch_tag = "".join(args.pick_channels)
 
     all_accs, all_itrs = [], []
-
     subjects = parse_subjects(args.subjects, "AR")
+
     all_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*.npz")))
+    all_files = [f for f in all_files if int(os.path.basename(f).split("_")[0].replace("sub-", "")) in subjects]
 
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
@@ -315,7 +316,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
-    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="1-3", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)

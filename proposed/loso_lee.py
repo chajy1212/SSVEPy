@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import Lee2019Dataset
+from data_loader import Lee2019Dataset_LOSO
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
 
@@ -180,8 +180,8 @@ def main(args):
         writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset split
-        train_dataset = Lee2019Dataset(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_dataset = Lee2019Dataset(subjects=[test_subj], pick_channels=args.pick_channels)
+        train_dataset = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
+        test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = train_dataset.C
         n_samples = train_dataset.T
