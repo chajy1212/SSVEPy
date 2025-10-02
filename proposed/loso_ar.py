@@ -1,17 +1,17 @@
 # -*- coding:utf-8 -*-
-import os
+import os, glob
 import torch
 import random
 import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader, ConcatDataset
 
+from data_loader import ARDataset
 from dual_attention import DualAttention
-from data_loader import Lee2019Dataset
-from branches import EEGBranch, StimulusBranch, TemplateBranch
+from branches import EEGBranch, StimulusBranchWithPhase, TemplateBranch
 
 
 # ===== Reproducibility =====
@@ -58,8 +58,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
     subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
     """
     if subjects_arg.lower() == "all":
-        if dataset_name == "Lee2019":
-            subjects = list(range(1, 55))  # 1 ~ 54
+        if dataset_name == "AR":
+            subjects = list(range(1, 25))  # 1 ~ 24
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -88,14 +88,15 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label in dataloader:
+    for eeg, label, freq, phase, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
+        freq, phase = freq.to(device), phase.to(device)
 
         optimizer.zero_grad()
 
         # Forward
         eeg_feat = eeg_branch(eeg)                                   # (B, D_eeg)
-        stim_feat = stim_branch(label)                               # (B, D_query)
+        stim_feat = stim_branch(freq, phase)                         # (B, D_query)
         temp_feat = temp_branch(eeg, label)                          # (B, D_query)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
 
@@ -130,12 +131,14 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     all_preds, all_labels = [], []
     total_loss = 0.0
+    task_correct, task_total = {}, {}
 
-    for eeg, label in dataloader:
+    for eeg, label, freq, phase, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
+        freq, phase = freq.to(device), phase.to(device)
 
         eeg_feat = eeg_branch(eeg)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
@@ -146,16 +149,25 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         all_preds.append(pred.cpu())
         all_labels.append(label.cpu())
 
+        # Task accuracy
+        for t, p, l in zip(task, pred.cpu(), label.cpu()):
+            t = str(t)
+            task_correct.setdefault(t, 0)
+            task_total.setdefault(t, 0)
+            task_correct[t] += int(p == l)
+            task_total[t] += 1
+
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
     avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
+    task_acc = {t: task_correct[t] / task_total[t] for t in task_total}
 
     # ITR
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return avg_loss, acc, itr
+    return avg_loss, acc, task_acc, itr
 
 
 # ===== Main (LOSO) =====
@@ -171,41 +183,42 @@ def main(args):
 
     all_accs, all_itrs = [], []
 
-    subjects = parse_subjects(args.subjects, "Lee2019")
+    subjects = parse_subjects(args.subjects, "AR")
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
-        train_subjs = [s for s in subjects if s != test_subj]
 
         # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOAR_sub{test_subj}_EEGNet_{ch_tag}")
 
-        # Dataset split
-        train_set = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
+        # Data split
+        all_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*.npz")))
+        train_files = [f for f in all_files if f"sub-{test_subj:03d}_" not in f]
+        test_files = [f for f in all_files if f"sub-{test_subj:03d}_" in f]
 
-        n_channels = train_set.C
-        n_samples = train_set.T
-        n_classes = train_set.n_classes
-        sfreq = train_set.sfreq
+        train_dataset = ConcatDataset([ARDataset(f) for f in train_files])
+        test_dataset = ConcatDataset([ARDataset(f) for f in test_files])
+
+        n_channels = train_dataset.datasets[0].C
+        n_samples = train_dataset.datasets[0].T
+        n_classes = train_dataset.datasets[0].n_classes
+        sfreq = train_dataset.datasets[0].sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_set, "freqs", np.linspace(8, 15, n_classes)))
 
-        print(f"[INFO] Dataset: Lee2019")
+        print(f"[INFO] Dataset: AR")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
+        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
         # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranch(freqs=freqs,
-                                     T=n_samples,
-                                     sfreq=sfreq,
-                                     hidden_dim=args.d_query,
-                                     n_harmonics=3).to(device)
+        stim_branch = StimulusBranchWithPhase(T=n_samples,
+                                              sfreq=sfreq,
+                                              hidden_dim=args.d_query,
+                                              n_harmonics=3).to(device)
         temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                      n_channels=n_channels,
                                      n_samples=n_samples,
@@ -227,7 +240,7 @@ def main(args):
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
         # best record
-        best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+        best_acc, best_itr, best_epoch, best_task_acc = 0.0, 0.0, 0, None
 
         # Train Loop
         for epoch in range(1, args.epochs + 1):
@@ -235,7 +248,7 @@ def main(args):
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 train_loader, optimizer, ce_criterion, device
             )
-            test_loss, test_acc, itr = evaluate(
+            test_loss, test_acc, task_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 test_loader, ce_criterion, device,
                 n_classes=n_classes, trial_time=trial_time
@@ -248,22 +261,28 @@ def main(args):
                   f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                   f"ITR: {itr:.4f} bits/min")
 
+            for t, acc in task_acc.items():
+                print(f"   Task {t}: {acc:.5f}")
+
             # TensorBoard logging
             writer.add_scalar("Loss/Train", train_loss, epoch)
             writer.add_scalar("Loss/Test", test_loss, epoch)
             writer.add_scalar("Accuracy/Train", train_acc, epoch)
             writer.add_scalar("Accuracy/Test", test_acc, epoch)
             writer.add_scalar("ITR/Test", itr, epoch)
+            for t, acc in task_acc.items():
+                writer.add_scalar(f"TaskAcc/{t}", acc, epoch)
 
             # update best record
             if test_acc > best_acc:
                 best_acc = test_acc
                 best_itr = itr
                 best_epoch = epoch
+                best_task_acc = task_acc
 
                 # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/model_path"
-                save_path = os.path.join(save_dir, f"Lee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+                save_path = os.path.join(save_dir, f"LOSOAR_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,
@@ -274,10 +293,12 @@ def main(args):
                     "temp_branch": temp_branch.state_dict(),
                     "dual_attn": dual_attn.state_dict(),
                     "optimizer": optimizer.state_dict(),
+                    "best_task_acc": best_task_acc
                 }, save_path)
 
                 print(f"\n[Save] Epoch {best_epoch} → Best model "
                       f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+                print(f"Best Task Acc: {best_task_acc}")
 
         writer.close()
 
@@ -292,13 +313,14 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
     # Parse channel selection

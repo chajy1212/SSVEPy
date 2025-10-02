@@ -9,8 +9,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from dual_attention import DualAttention
 from data_loader import Lee2019Dataset
+from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
 
 
@@ -177,27 +177,27 @@ def main(args):
         train_subjs = [s for s in subjects if s != test_subj]
 
         # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset split
-        train_set = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
+        train_dataset = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
+        test_dataset = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
 
-        n_channels = train_set.C
-        n_samples = train_set.T
-        n_classes = train_set.n_classes
-        sfreq = train_set.sfreq
+        n_channels = train_dataset.C
+        n_samples = train_dataset.T
+        n_classes = train_dataset.n_classes
+        sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_set, "freqs", np.linspace(8, 15, n_classes)))
+        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
+        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
         # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
@@ -262,8 +262,8 @@ def main(args):
                 best_epoch = epoch
 
                 # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/model_path"
-                save_path = os.path.join(save_dir, f"Lee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+                save_path = os.path.join(save_dir, f"LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,

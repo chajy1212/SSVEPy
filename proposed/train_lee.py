@@ -179,7 +179,6 @@ def main(args):
     n_channels = train_dataset.C
     n_samples = train_dataset.T
     n_classes = train_dataset.n_classes
-    ch_names = train_dataset.ch_names
     sfreq = train_dataset.sfreq
     trial_time = n_samples / sfreq
     freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
@@ -187,7 +186,7 @@ def main(args):
     print(f"[INFO] Dataset: Lee2019")
     print(f"[INFO] Subjects used ({len(subjects)}): {args.subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-    print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)

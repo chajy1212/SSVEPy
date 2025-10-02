@@ -6,11 +6,11 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import Nakanishi2015Dataset
 from branches import EEGBranch
+from data_loader import Lee2019Dataset
 
 
 # ===== Reproducibility =====
@@ -57,8 +57,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
     subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
     """
     if subjects_arg.lower() == "all":
-        if dataset_name == "Nakanishi2015":
-            subjects = list(range(1, 11))  # 1 ~ 10
+        if dataset_name == "Lee2019":
+            subjects = list(range(1, 55))  # 1 ~ 54
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -90,7 +90,7 @@ def train_one_epoch(eeg_branch, classifier, dataloader, optimizer, ce_criterion,
         optimizer.zero_grad()
 
         # Forward
-        feat = eeg_branch(eeg)  # (B, D_eeg)
+        feat = eeg_branch(eeg)     # (B, D_eeg)
         logits = classifier(feat)  # (B, n_classes)
 
         loss = ce_criterion(logits, label)
@@ -159,17 +159,17 @@ def main(args):
 
     all_accs, all_itrs = [], []
 
-    subjects = parse_subjects(args.subjects, "Nakanishi2015")
+    subjects = parse_subjects(args.subjects, "Lee2019")
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
 
         # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_only/runs/Nakanishi2015_sub{test_subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_only/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
-        # Dataset
-        train_set = Nakanishi2015Dataset(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_set = Nakanishi2015Dataset(subjects=[test_subj], pick_channels=args.pick_channels)
+        # Dataset split
+        train_set = Lee2019Dataset(subjects=train_subjs, train=True, pick_channels=args.pick_channels)
+        test_set = Lee2019Dataset(subjects=[test_subj], train=False, pick_channels=args.pick_channels)
 
         n_channels = train_set.C
         n_samples = train_set.T
@@ -177,12 +177,11 @@ def main(args):
         sfreq = train_set.sfreq
         trial_time = n_samples / sfreq
 
-        print(f"[INFO] Dataset: Nakanishi2015")
+        print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
         print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(
-            f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
@@ -234,7 +233,7 @@ def main(args):
 
                 # Save Model
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_only/model_path"
-                save_path = os.path.join(save_dir, f"Nakanishi2015_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_path = os.path.join(save_dir, f"Lee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,
@@ -263,9 +262,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--pick_channels", type=str, default="all", help=" 'O1,O2,Oz', 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'O1,O2,Oz', 'all' ")
     args = parser.parse_args()
 
     # Parse channel selection

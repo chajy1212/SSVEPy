@@ -202,14 +202,13 @@ def main(args):
     n_channels = train_dataset.datasets[0].C
     n_samples = train_dataset.datasets[0].T
     n_classes = train_dataset.datasets[0].n_classes
-    ch_names = train_dataset.datasets[0].ch_names
     sfreq = train_dataset.datasets[0].sfreq
     trial_time = n_samples / sfreq
 
     print(f"[INFO] Dataset: AR")
     print(f"[INFO] Subjects used ({len(subjects)}): {args.subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-    print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
