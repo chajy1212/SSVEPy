@@ -8,6 +8,10 @@ SSVEPy/
 ├── proposed/
 │   ├── DTN.py     				        # Dynamic Template Network (DTN)
 │   ├── EEGNet.py               		# EEGNet 기반 EEG 인코더
+│   ├── ablation_eegnet_dtn.py          # Ablation Study (EEGNet + DTN)
+│   ├── ablation_eegnet_stim.py         # Ablation Study (EEGNet + Stimulus)
+│   ├── ablation_full_model.py          # Ablation Study (EEGNet + Stimulus + DTN + Dual Attention)
+│   ├── ablation_only_eegnet.py         # Ablation Study (EEGNet only)
 │   ├── branches.py             		# EEG, Stimulus, Template branch encoders
 │   ├── data_loader.py          		# Dataset 정의
 │   ├── dual_attention.py       		# Dual Attention 모듈, EEG→Key/Value, Stimulus/Template→Query 결합
