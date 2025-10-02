@@ -184,6 +184,8 @@ def main(args):
     all_accs, all_itrs = [], []
 
     subjects = parse_subjects(args.subjects, "AR")
+    all_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*.npz")))
+
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
 
@@ -191,7 +193,6 @@ def main(args):
         writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOAR_sub{test_subj}_EEGNet_{ch_tag}")
 
         # Data split
-        all_files = sorted(glob.glob(os.path.join(args.ar_data_root, "*.npz")))
         train_files = [f for f in all_files if f"sub-{test_subj:03d}_" not in f]
         test_files = [f for f in all_files if f"sub-{test_subj:03d}_" in f]
 
