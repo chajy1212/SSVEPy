@@ -15,14 +15,17 @@ SSVEPy/
 │   ├── branches.py             		# EEG, Stimulus, Template branch encoders
 │   ├── data_loader.py          		# Dataset 정의
 │   ├── dual_attention.py       		# Dual Attention 모듈, EEG→Key/Value, Stimulus/Template→Query 결합
+│   ├── loso_ar.py       			    # AR Dataset LOSO 학습 파이프라인
+│   ├── loso_lee.py       			    # Lee Dataset LOSO 학습 파이프라인
+│   ├── loso_nakanishi.py       		# Nakanishi Dataset LOSO 학습 파이프라인
 │   ├── preprocess_AR.py        		# AR Dataset Raw EEG → .npz 변환 유틸 (All Channel)
 │   ├── preprocess_AR_occi.py  		    # AR Dataset Raw EEG → .npz 변환 유틸 (Occipital Channel)
 │   ├── simple_attention.py             # Simple Attention 모듈
 │   ├── stimulus.py             		# StimulusEncoder, 자극 reference 신호(sin/cos) latent feature 추출
-│   ├── train_ar.py                		# AR Dataset 전용 학습 파이프라인
-│   ├── train_beta.py               	# BETA Dataset 전용 학습 파이프라인
-│   ├── train_lee.py                    # Lee Dataset 전용 학습 파이프라인
-│   └── train_nakanishi.py              # Nakanishi Dataset 전용 학습 파이프라인
+│   ├── train_ar.py                		# AR Dataset Session Split 학습 파이프라인
+│   ├── train_beta.py               	# BETA Dataset LOSO 학습 파이프라인
+│   ├── train_lee.py                    # Lee Dataset Session Split 학습 파이프라인
+│   └── train_nakanishi.py              # Nakanishi Dataset Random Split 학습 파이프라인
 │
 ├── model/
 │   ├── FBCCA.py
