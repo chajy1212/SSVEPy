@@ -33,7 +33,7 @@ def print_total_model_size(*models):
 
 
 # ===== ITR function =====
-def compute_itr(acc, n_classes, trial_time):
+def compute_itr(acc, n_classes, trial_time, eps=1e-12):
     """
     Compute Information Transfer Rate (ITR) in bits/min.
     acc: accuracy (0~1)
@@ -42,6 +42,9 @@ def compute_itr(acc, n_classes, trial_time):
     """
     if acc <= 0 or n_classes <= 1:
         return 0.0
+
+    acc = min(max(acc, eps), 1 - eps)  # avoid log(0) or log(negative)
+
     itr = (np.log2(n_classes) +
            acc * np.log2(acc) +
            (1 - acc) * np.log2((1 - acc) / (n_classes - 1)))
@@ -287,8 +290,7 @@ def main(args):
     # After loop → LOSO summary
     print("\n[Final LOSO]")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
-    if all_itrs:
-        print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
+    print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':

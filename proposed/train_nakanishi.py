@@ -1,5 +1,5 @@
 # -*- coding:utf-8 -*-
-import os, glob
+import os
 import torch
 import random
 import argparse
@@ -33,7 +33,7 @@ def print_total_model_size(*models):
 
 
 # ===== ITR function =====
-def compute_itr(acc, n_classes, trial_time):
+def compute_itr(acc, n_classes, trial_time, eps=1e-12):
     """
     Compute Information Transfer Rate (ITR) in bits/min.
     acc: accuracy (0~1)
@@ -42,6 +42,9 @@ def compute_itr(acc, n_classes, trial_time):
     """
     if acc <= 0 or n_classes <= 1:
         return 0.0
+
+    acc = min(max(acc, eps), 1 - eps)  # avoid log(0) or log(negative)
+
     itr = (np.log2(n_classes) +
            acc * np.log2(acc) +
            (1 - acc) * np.log2((1 - acc) / (n_classes - 1)))
@@ -185,7 +188,7 @@ def main(args):
     freqs = list(dataset.freqs)  # label index → Hz
 
     print(f"[INFO] Dataset: Nakanishi2015")
-    print(f"[INFO] Subjects used ({len(args.subjects)}): {args.subjects}")
+    print(f"[INFO] Subjects used ({len(subjects)}): {args.subjects}")
     print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
     print(f"[INFO] Channels used ({n_channels}): {', '.join(ch_names)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -278,7 +281,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
