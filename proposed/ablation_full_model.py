@@ -158,7 +158,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     return avg_loss, acc, itr
 
 
-# ===== Main (LOSO) =====
+# ===== Main (subject-wise session split) =====
 def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -169,110 +169,123 @@ def main(args):
     else:
         ch_tag = "".join(args.pick_channels)
 
-    # TensorBoard writer
-    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_{args.subjects}_EEGNet_{ch_tag}")
-
     subjects = parse_subjects(args.subjects, "Lee2019")
-    train_dataset = Lee2019Dataset(subjects=subjects, train=True, pick_channels=args.pick_channels)
-    test_dataset = Lee2019Dataset(subjects=subjects, train=False, pick_channels=args.pick_channels)
 
-    n_channels = train_dataset.C
-    n_samples = train_dataset.T
-    n_classes = train_dataset.n_classes
-    sfreq = train_dataset.sfreq
-    trial_time = n_samples / sfreq
-    freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
+    all_accs, all_itrs = [], []
 
-    print(f"[INFO] Dataset: Lee2019")
-    print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-    print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+    for subj in subjects:
+        print(f"\n========== [Subject {subj:02d}] ==========")
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+        # TensorBoard writer
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
 
-    # Model
-    eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-    stim_branch = StimulusBranch(freqs=freqs,
-                                 T=n_samples,
-                                 sfreq=sfreq,
-                                 hidden_dim=args.d_query,
-                                 n_harmonics=3).to(device)
-    temp_branch = TemplateBranch(n_bands=8, n_features=32,
-                                 n_channels=n_channels,
-                                 n_samples=n_samples,
-                                 n_classes=n_classes,
-                                 D_temp=args.d_query).to(device)
-    dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
-                              d_query=args.d_query,
-                              d_model=args.d_model,
-                              num_heads=4,
-                              proj_dim=n_classes).to(device)
+        train_dataset = Lee2019Dataset(subjects=[subj], train=True, pick_channels=args.pick_channels)
+        test_dataset = Lee2019Dataset(subjects=[subj], train=False, pick_channels=args.pick_channels)
 
-    print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+        n_channels = train_dataset.C
+        n_samples = train_dataset.T
+        n_classes = train_dataset.n_classes
+        sfreq = train_dataset.sfreq
+        trial_time = n_samples / sfreq
+        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
-    params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-             list(temp_branch.parameters()) + list(dual_attn.parameters())
+        print(f"[INFO] Dataset: Lee2019")
+        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
+        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
+        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-    optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-    ce_criterion = nn.CrossEntropyLoss()
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-    # best record
-    best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+        # Model
+        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+        stim_branch = StimulusBranch(freqs=freqs,
+                                     T=n_samples,
+                                     sfreq=sfreq,
+                                     hidden_dim=args.d_query,
+                                     n_harmonics=3).to(device)
+        temp_branch = TemplateBranch(n_bands=8, n_features=32,
+                                     n_channels=n_channels,
+                                     n_samples=n_samples,
+                                     n_classes=n_classes,
+                                     D_temp=args.d_query).to(device)
+        dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
+                                  d_query=args.d_query,
+                                  d_model=args.d_model,
+                                  num_heads=4,
+                                  proj_dim=n_classes).to(device)
 
-    # Train Loop
-    for epoch in range(1, args.epochs + 1):
-        train_loss, train_acc = train_one_epoch(
-            eeg_branch, stim_branch, temp_branch, dual_attn,
-            train_loader, optimizer, ce_criterion, device
-        )
-        test_loss, test_acc, itr = evaluate(
-            eeg_branch, stim_branch, temp_branch, dual_attn,
-            test_loader, ce_criterion, device,
-            n_classes=n_classes, trial_time=trial_time
-        )
+        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-        scheduler.step()
+        params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
+                 list(temp_branch.parameters()) + list(dual_attn.parameters())
 
-        print(f"\n[Epoch {epoch:03d}] "
-              f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
-              f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
-              f"ITR: {itr:.4f} bits/min")
+        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
+        ce_criterion = nn.CrossEntropyLoss()
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-        # TensorBoard logging
-        writer.add_scalar("Loss/Train", train_loss, epoch)
-        writer.add_scalar("Loss/Test", test_loss, epoch)
-        writer.add_scalar("Accuracy/Train", train_acc, epoch)
-        writer.add_scalar("Accuracy/Test", test_acc, epoch)
-        writer.add_scalar("ITR/Test", itr, epoch)
+        # best record
+        best_acc, best_itr, best_epoch = 0.0, 0.0, 0
 
-        # update best record
-        if test_acc > best_acc:
-            best_acc = test_acc
-            best_itr = itr
-            best_epoch = epoch
+        # Train Loop
+        for epoch in range(1, args.epochs + 1):
+            train_loss, train_acc = train_one_epoch(
+                eeg_branch, stim_branch, temp_branch, dual_attn,
+                train_loader, optimizer, ce_criterion, device
+            )
+            test_loss, test_acc, itr = evaluate(
+                eeg_branch, stim_branch, temp_branch, dual_attn,
+                test_loader, ce_criterion, device,
+                n_classes=n_classes, trial_time=trial_time
+            )
 
-            # Save Model
-            save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/model_path"
-            save_path = os.path.join(save_dir, f"Lee2019_{args.subjects}_EEGNet_{ch_tag}.pth")
+            scheduler.step()
 
-            torch.save({
-                "epoch": best_epoch,
-                "best_acc": best_acc,
-                "best_itr": best_itr,
-                "eeg_branch": eeg_branch.state_dict(),
-                "stim_branch": stim_branch.state_dict(),
-                "temp_branch": temp_branch.state_dict(),
-                "dual_attn": dual_attn.state_dict(),
-                "optimizer": optimizer.state_dict(),
-            }, save_path)
+            print(f"\n[Epoch {epoch:03d}] "
+                  f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+                  f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+                  f"ITR: {itr:.4f} bits/min")
 
-            print(f"\n[Save] Epoch {best_epoch} → Best model "
-                  f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+            # TensorBoard logging
+            writer.add_scalar("Loss/Train", train_loss, epoch)
+            writer.add_scalar("Loss/Test", test_loss, epoch)
+            writer.add_scalar("Accuracy/Train", train_acc, epoch)
+            writer.add_scalar("Accuracy/Test", test_acc, epoch)
+            writer.add_scalar("ITR/Test", itr, epoch)
 
-    writer.close()
+            # update best record
+            if test_acc > best_acc:
+                best_acc = test_acc
+                best_itr = itr
+                best_epoch = epoch
+
+                # Save Model
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/model_path"
+                save_path = os.path.join(save_dir, f"Lee2019_Sub{subj}_EEGNet_{ch_tag}.pth")
+
+                torch.save({
+                    "epoch": best_epoch,
+                    "best_acc": best_acc,
+                    "best_itr": best_itr,
+                    "eeg_branch": eeg_branch.state_dict(),
+                    "stim_branch": stim_branch.state_dict(),
+                    "temp_branch": temp_branch.state_dict(),
+                    "dual_attn": dual_attn.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                }, save_path)
+
+                print(f"\n[Save] Epoch {best_epoch} → Best model "
+                      f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+
+        writer.close()
+        all_accs.append(best_acc)
+        all_itrs.append(best_itr)
+
+    # Summary
+    print("\n[Final]")
+    print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
+    print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':
