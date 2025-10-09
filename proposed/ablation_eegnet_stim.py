@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import Lee2019Dataset_LOSO
+from data_loader import Lee2019Dataset
 from branches import EEGBranch, StimulusBranch
 from simple_attention import SimpleAttention_EEG_Stimulus
 
@@ -164,118 +164,102 @@ def main(args):
     else:
         ch_tag = "".join(args.pick_channels)
 
-    all_accs, all_itrs = [], []
+    # TensorBoard writer
+    writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_stim/runs/Lee2019_{args.subjects}_EEGNet_{ch_tag}")
 
     subjects = parse_subjects(args.subjects, "Lee2019")
+    train_dataset = Lee2019Dataset(subjects=subjects, train=True, pick_channels=args.pick_channels)
+    test_dataset = Lee2019Dataset(subjects=subjects, train=False, pick_channels=args.pick_channels)
 
-    for test_subj in subjects:
-        print(f"\n--- LOSO Test Subject: {test_subj} ---")
-        train_subjs = [s for s in subjects if s != test_subj]
+    n_channels = train_dataset.C
+    n_samples = train_dataset.T
+    n_classes = train_dataset.n_classes
+    sfreq = train_dataset.sfreq
+    trial_time = n_samples / sfreq
+    freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
-        # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_stim/runs/Lee2019_sub{test_subj}_EEGNet_{ch_tag}")
+    print(f"[INFO] Dataset: Lee2019")
+    print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
+    print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-        # Dataset split
-        train_set = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_set = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-        n_channels = train_set.C
-        n_samples = train_set.T
-        n_classes = train_set.n_classes
-        sfreq = train_set.sfreq
-        trial_time = n_samples / sfreq
-        freqs = list(getattr(train_set, "freqs", np.linspace(8, 15, n_classes)))
+    # Model
+    eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+    stim_branch = StimulusBranch(freqs=freqs,
+                                 T=n_samples,
+                                 sfreq=sfreq,
+                                 hidden_dim=args.d_query,
+                                 n_harmonics=3).to(device)
+    attn_module = SimpleAttention_EEG_Stimulus(d_eeg=eeg_branch.out_dim,
+                                               d_query=args.d_query,
+                                               d_model=args.d_model,
+                                               n_classes=n_classes).to(device)
 
-        print(f"[INFO] Dataset: Lee2019")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+    print_total_model_size(eeg_branch, stim_branch, attn_module)
 
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+    params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + list(attn_module.parameters())
 
-        # Model
-        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranch(freqs=freqs,
-                                     T=n_samples,
-                                     sfreq=sfreq,
-                                     hidden_dim=args.d_query,
-                                     n_harmonics=3).to(device)
-        attn_module = SimpleAttention_EEG_Stimulus(d_eeg=eeg_branch.out_dim,
-                                                   d_query=args.d_query,
-                                                   d_model=args.d_model,
-                                                   n_classes=n_classes).to(device)
+    optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
+    ce_criterion = nn.CrossEntropyLoss()
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-        print_total_model_size(eeg_branch, stim_branch, attn_module)
+    # best record
+    best_acc, best_itr, best_epoch = 0.0, 0.0, 0
 
-        params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + list(attn_module.parameters())
+    # Train Loop
+    for epoch in range(1, args.epochs + 1):
+        train_loss, train_acc = train_one_epoch(
+            eeg_branch, stim_branch, attn_module,
+            train_loader, optimizer, ce_criterion, device
+        )
+        test_loss, test_acc, itr = evaluate(
+            eeg_branch, stim_branch, attn_module,
+            test_loader, ce_criterion, device,
+            n_classes=n_classes, trial_time=trial_time
+        )
 
-        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-        ce_criterion = nn.CrossEntropyLoss()
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        scheduler.step()
 
-        # best record
-        best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+        print(f"\n[Epoch {epoch:03d}] "
+              f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+              f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+              f"ITR: {itr:.4f} bits/min")
 
-        # Train Loop
-        for epoch in range(1, args.epochs + 1):
-            train_loss, train_acc = train_one_epoch(
-                eeg_branch, stim_branch, attn_module,
-                train_loader, optimizer, ce_criterion, device
-            )
-            test_loss, test_acc, itr = evaluate(
-                eeg_branch, stim_branch, attn_module,
-                test_loader, ce_criterion, device,
-                n_classes=n_classes, trial_time=trial_time
-            )
+        # TensorBoard logging
+        writer.add_scalar("Loss/Train", train_loss, epoch)
+        writer.add_scalar("Loss/Test", test_loss, epoch)
+        writer.add_scalar("Accuracy/Train", train_acc, epoch)
+        writer.add_scalar("Accuracy/Test", test_acc, epoch)
+        writer.add_scalar("ITR/Test", itr, epoch)
 
-            scheduler.step()
+        # update best record
+        if test_acc > best_acc:
+            best_acc = test_acc
+            best_itr = itr
+            best_epoch = epoch
 
-            print(f"\n[Epoch {epoch:03d}] "
-                  f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
-                  f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
-                  f"ITR: {itr:.4f} bits/min")
+            # Save Model
+            save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_stim/model_path"
+            save_path = os.path.join(save_dir, f"Lee2019_{args.subjects}_EEGNet_{ch_tag}.pth")
 
-            # TensorBoard logging
-            writer.add_scalar("Loss/Train", train_loss, epoch)
-            writer.add_scalar("Loss/Test", test_loss, epoch)
-            writer.add_scalar("Accuracy/Train", train_acc, epoch)
-            writer.add_scalar("Accuracy/Test", test_acc, epoch)
-            writer.add_scalar("ITR/Test", itr, epoch)
+            torch.save({
+                "epoch": best_epoch,
+                "best_acc": best_acc,
+                "best_itr": best_itr,
+                "eeg_branch": eeg_branch.state_dict(),
+                "stim_branch": stim_branch.state_dict(),
+                "attn_module": attn_module.state_dict(),
+                "optimizer": optimizer.state_dict(),
+            }, save_path)
 
-            # update best record
-            if test_acc > best_acc:
-                best_acc = test_acc
-                best_itr = itr
-                best_epoch = epoch
+            print(f"\n[Save] Epoch {best_epoch} → Best model "
+                  f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
-                # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_stim/model_path"
-                save_path = os.path.join(save_dir, f"Lee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
-
-                torch.save({
-                    "epoch": best_epoch,
-                    "best_acc": best_acc,
-                    "best_itr": best_itr,
-                    "eeg_branch": eeg_branch.state_dict(),
-                    "stim_branch": stim_branch.state_dict(),
-                    "attn_module": attn_module.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                }, save_path)
-
-                print(f"\n[Save] Epoch {best_epoch} → Best model "
-                      f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
-
-        writer.close()
-
-        all_accs.append(best_acc)
-        all_itrs.append(best_itr)
-
-    # After loop → LOSO summary
-    print("\n[Final LOSO]")
-    print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
-    print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
+    writer.close()
 
 
 if __name__ == '__main__':
