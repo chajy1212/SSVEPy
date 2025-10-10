@@ -10,7 +10,8 @@ SSVEPy/
 │   ├── EEGNet.py               		# EEGNet 기반 EEG 인코더
 │   ├── ablation_eegnet_dtn.py          # LOSO Ablation Study (EEGNet + DTN)
 │   ├── ablation_eegnet_stim.py         # LOSO Ablation Study (EEGNet + Stimulus)
-│   ├── ablation_full_model.py          # LOSO Ablation Study (EEGNet + Stimulus + DTN + Dual Attention)
+│   ├── ablation_eegnet_dtn_stim.py     # LOSO Ablation Study (EEGNet + DTN + Stimulus + Attention)
+│   ├── ablation_full_model.py          # LOSO Ablation Study (EEGNet + DTN + Stimulus + Dual Attention)
 │   ├── ablation_only_eegnet.py         # LOSO Ablation Study (EEGNet only)
 │   ├── branches.py             		# EEG, Stimulus, Template branch encoders
 │   ├── data_loader.py          		# Dataset 정의
