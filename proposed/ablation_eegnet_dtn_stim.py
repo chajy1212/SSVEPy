@@ -6,6 +6,7 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -104,7 +105,11 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch,
         _, attn_s = attn_eeg_stim(eeg_feat, stim_feat)
         _, attn_t = attn_eeg_temp(eeg_feat, temp_feat)
 
-        fused = torch.cat([attn_s, attn_t], dim=-1)
+        attn_s = F.layer_norm(attn_s, attn_s.shape[1:])
+        attn_t = F.layer_norm(attn_t, attn_t.shape[1:])
+
+        # fused = torch.cat([attn_s, attn_t], dim=-1)   # Concat
+        fused = attn_s + attn_t                         # Element-wise sum
         logits = fusion_head(fused)
 
         # CE loss
@@ -236,9 +241,16 @@ def main(args):
             d_model=args.d_model, n_classes=n_classes
         ).to(device)
 
+        # Concat
+        # fusion_head = nn.Sequential(
+        #     nn.LayerNorm(2 * args.d_model),
+        #     nn.Linear(2 * args.d_model, n_classes)
+        # ).to(device)
+
+        # Element-wise sum
         fusion_head = nn.Sequential(
-            nn.LayerNorm(2 * args.d_model),
-            nn.Linear(2 * args.d_model, n_classes)
+            nn.LayerNorm(args.d_model),
+            nn.Linear(args.d_model, n_classes)
         ).to(device)
 
         print_total_model_size(eeg_branch, stim_branch, temp_branch, attn_eeg_stim, attn_eeg_temp, fusion_head)
