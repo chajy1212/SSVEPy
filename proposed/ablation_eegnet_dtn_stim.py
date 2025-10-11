@@ -157,7 +157,11 @@ def evaluate(eeg_branch, stim_branch, temp_branch,
         _, attn_s = attn_eeg_stim(eeg_feat, stim_feat)
         _, attn_t = attn_eeg_temp(eeg_feat, temp_feat)
 
-        fused = torch.cat([attn_s, attn_t], dim=-1)
+        attn_s = F.layer_norm(attn_s, attn_s.shape[1:])
+        attn_t = F.layer_norm(attn_t, attn_t.shape[1:])
+
+        # fused = torch.cat([attn_s, attn_t], dim=-1)   # Concat
+        fused = attn_s + attn_t  # Element-wise sum
         logits = fusion_head(fused)
 
         loss = ce_criterion(logits, label)
