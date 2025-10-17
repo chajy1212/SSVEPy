@@ -1,4 +1,5 @@
 # -*- coding:utf-8 -*-
+import os, glob
 import mne
 import torch
 import numpy as np
@@ -12,12 +13,24 @@ from SSVEPAnalysisToolbox.datasets.betadataset import BETADataset
 
 
 class ARDataset(Dataset):
-    def __init__(self, npz_file, n_classes=None):
-        """
-        npz_file: path to .npz file
-        T_stim: stimulus length (default = EEG segment length)
-        """
+    def __init__(self, data_root, subject, exp_name, session="train"):
+        self.data_root = data_root
+        self.subject = int(str(subject).replace("S", ""))
+        self.exp_name = exp_name
+        self.session = session.lower()
+
+        pattern = os.path.join(
+            data_root,
+            f"sub-{self.subject:03d}_ses-0{1 if self.session == 'train' else 2}.npz"
+        )
+        files = sorted(glob.glob(pattern))
+        if not files:
+            raise FileNotFoundError(
+                f"[ERROR] No file found for {self.exp_name} / Subject {self.subject:02d} / {self.session}")
+
+        npz_file = files[0]
         data = np.load(npz_file, allow_pickle=True)
+
         self.epochs = data["epochs"]  # (N,C,T)
         self.labels = data["labels"]  # (N,)
         self.freqs = data["freqs"]    # (N,)
@@ -34,11 +47,13 @@ class ARDataset(Dataset):
         self.class2freq = {i: f for f, i in self.freq2class.items()}
         self.n_classes = len(unique_freqs)
 
+        print(f"[INFO] Loaded {npz_file} | {self.exp_name}, Sub-{self.subject:02d}, {self.session}, Classes={self.n_classes}")
+
     def __len__(self):
         return self.N
 
     def __getitem__(self, idx):
-        # EEG input
+        # EEG input (C,T) → (1,C,T)
         eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1, C, T)
 
         # Convert Hz label → class index

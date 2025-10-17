@@ -182,141 +182,149 @@ def main(args):
         ch_tag = "".join(args.pick_channels)
 
     subjects = parse_subjects(args.subjects, "AR")
-    all_accs, all_itrs = [], []
 
-    for subj in subjects:
-        print(f"\n========== [Subject {subj:02d}] ==========")
+    if args.subjects.lower() != "all":
+        subject_partition = {"Custom": subjects}
+    else:
+        subject_partition = {
+            "Exp1": list(range(1, 15)),
+            "Exp2": list(range(1, 14)) + [15],
+            "Exp3": list(range(1, 9)) + list(range(16, 25))
+        }
 
-        # TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/AR_Sub{subj}_EEGNet_{ch_tag}")
+    for exp_name, subj_list in subject_partition.items():
+        print(f"\n========== [{exp_name}] Subjects: {subj_list} ==========")
+        all_accs, all_itrs = [], []
 
-        # Load session files for this subject
-        train_file = glob.glob(os.path.join(args.ar_data_root, f"sub-{subj:03d}_*ses-01.npz"))
-        test_file = glob.glob(os.path.join(args.ar_data_root, f"sub-{subj:03d}_*ses-02.npz"))
+        for subj in subj_list:
+            print(f"\n========== [Subject {subj:02d}] ==========")
 
-        if not train_file or not test_file:
-            print(f"[WARN] Missing files for Subject {subj}. Skipping.")
-            continue
+            # TensorBoard writer
+            writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/AR{exp_name}_Sub{subj}_EEGNet_{ch_tag}")
 
-        train_dataset = ARDataset(train_file[0])
-        test_dataset = ARDataset(test_file[0])
+            try:
+                train_dataset = ARDataset(args.ar_data_root, subj, exp_name, session="train")
+                test_dataset = ARDataset(args.ar_data_root, subj, exp_name, session="test")
+            except FileNotFoundError as e:
+                print(e)
+                continue
 
-        n_channels = train_dataset.C
-        n_samples = train_dataset.T
-        n_classes = train_dataset.n_classes
-        sfreq = train_dataset.sfreq
-        trial_time = n_samples / sfreq
+            n_channels = train_dataset.C
+            n_samples = train_dataset.T
+            n_classes = train_dataset.n_classes
+            sfreq = train_dataset.sfreq
+            trial_time = n_samples / sfreq
 
-        print(f"[INFO] Dataset: AR")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+            print(f"[INFO] Dataset: AR")
+            print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
+            print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+            print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-        # Model
-        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranchWithPhase(T=n_samples,
-                                                  sfreq=sfreq,
-                                                  hidden_dim=args.d_query,
-                                                  n_harmonics=3).to(device)
-        temp_branch = TemplateBranch(n_bands=8, n_features=32,
-                                     n_channels=n_channels,
-                                     n_samples=n_samples,
-                                     n_classes=n_classes,
-                                     D_temp=args.d_query).to(device)
-        dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
-                                  d_query=args.d_query,
-                                  d_model=args.d_model,
-                                  num_heads=4,
-                                  proj_dim=n_classes).to(device)
+            # Model
+            eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+            stim_branch = StimulusBranchWithPhase(T=n_samples,
+                                                      sfreq=sfreq,
+                                                      hidden_dim=args.d_query,
+                                                      n_harmonics=3).to(device)
+            temp_branch = TemplateBranch(n_bands=8, n_features=32,
+                                         n_channels=n_channels,
+                                         n_samples=n_samples,
+                                         n_classes=n_classes,
+                                         D_temp=args.d_query).to(device)
+            dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
+                                      d_query=args.d_query,
+                                      d_model=args.d_model,
+                                      num_heads=4,
+                                      proj_dim=n_classes).to(device)
 
-        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+            print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-        params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-                 list(temp_branch.parameters()) + list(dual_attn.parameters())
+            params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
+                     list(temp_branch.parameters()) + list(dual_attn.parameters())
 
-        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-        ce_criterion = nn.CrossEntropyLoss()
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+            optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
+            ce_criterion = nn.CrossEntropyLoss()
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-        # best record
-        best_acc, best_itr, best_epoch, best_task_acc = 0.0, 0.0, 0, None
+            # best record
+            best_acc, best_itr, best_epoch, best_task_acc = 0.0, 0.0, 0, None
 
-        # Train Loop
-        for epoch in range(1, args.epochs + 1):
-            train_loss, train_acc = train_one_epoch(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
-                train_loader, optimizer, ce_criterion, device
-            )
-            test_loss, test_acc, task_acc, itr = evaluate(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
-                test_loader, ce_criterion, device,
-                n_classes=n_classes, trial_time=trial_time
-            )
+            # Train Loop
+            for epoch in range(1, args.epochs + 1):
+                train_loss, train_acc = train_one_epoch(
+                    eeg_branch, stim_branch, temp_branch, dual_attn,
+                    train_loader, optimizer, ce_criterion, device
+                )
+                test_loss, test_acc, task_acc, itr = evaluate(
+                    eeg_branch, stim_branch, temp_branch, dual_attn,
+                    test_loader, ce_criterion, device,
+                    n_classes=n_classes, trial_time=trial_time
+                )
 
-            scheduler.step()
+                scheduler.step()
 
-            print(f"\n[Epoch {epoch:03d}] "
-                  f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
-                  f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
-                  f"ITR: {itr:.4f} bits/min")
+                print(f"\n[Epoch {epoch:03d}] "
+                      f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+                      f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+                      f"ITR: {itr:.4f} bits/min")
 
-            for t, acc in task_acc.items():
-                print(f"   Task {t}: {acc:.5f}")
+                for t, acc in task_acc.items():
+                    print(f"   Task {t}: {acc:.5f}")
 
-            # TensorBoard logging
-            writer.add_scalar("Loss/Train", train_loss, epoch)
-            writer.add_scalar("Loss/Test", test_loss, epoch)
-            writer.add_scalar("Accuracy/Train", train_acc, epoch)
-            writer.add_scalar("Accuracy/Test", test_acc, epoch)
-            writer.add_scalar("ITR/Test", itr, epoch)
-            for t, acc in task_acc.items():
-                writer.add_scalar(f"TaskAcc/{t}", acc, epoch)
+                # TensorBoard logging
+                writer.add_scalar("Loss/Train", train_loss, epoch)
+                writer.add_scalar("Loss/Test", test_loss, epoch)
+                writer.add_scalar("Accuracy/Train", train_acc, epoch)
+                writer.add_scalar("Accuracy/Test", test_acc, epoch)
+                writer.add_scalar("ITR/Test", itr, epoch)
+                for t, acc in task_acc.items():
+                    writer.add_scalar(f"TaskAcc/{t}", acc, epoch)
 
-            # update best record
-            if test_acc > best_acc:
-                best_acc = test_acc
-                best_itr = itr
-                best_epoch = epoch
-                best_task_acc = task_acc
+                # update best record
+                if test_acc > best_acc:
+                    best_acc = test_acc
+                    best_itr = itr
+                    best_epoch = epoch
+                    best_task_acc = task_acc
 
-                # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                save_path = os.path.join(save_dir, f"AR_Sub{subj}_EEGNet_{ch_tag}.pth")
+                    # Save Model
+                    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+                    save_path = os.path.join(save_dir, f"AR{exp_name}_Sub{subj}_EEGNet_{ch_tag}.pth")
 
-                torch.save({
-                    "epoch": best_epoch,
-                    "best_acc": best_acc,
-                    "best_itr": best_itr,
-                    "eeg_branch": eeg_branch.state_dict(),
-                    "stim_branch": stim_branch.state_dict(),
-                    "temp_branch": temp_branch.state_dict(),
-                    "dual_attn": dual_attn.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "best_task_acc": best_task_acc
-                }, save_path)
+                    torch.save({
+                        "epoch": best_epoch,
+                        "best_acc": best_acc,
+                        "best_itr": best_itr,
+                        "eeg_branch": eeg_branch.state_dict(),
+                        "stim_branch": stim_branch.state_dict(),
+                        "temp_branch": temp_branch.state_dict(),
+                        "dual_attn": dual_attn.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "best_task_acc": best_task_acc
+                    }, save_path)
 
-                print(f"\n[Save] Epoch {best_epoch} → Best model "
-                      f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
-                print(f"Best Task Acc: {best_task_acc}")
+                    print(f"\n[Save] Epoch {best_epoch} → Best model "
+                          f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+                    print(f"Best Task Acc: {best_task_acc}")
 
-        writer.close()
-        all_accs.append(best_acc)
-        all_itrs.append(best_itr)
+            writer.close()
+            all_accs.append(best_acc)
+            all_itrs.append(best_itr)
 
-    # Summary
-    print("\n[Final]")
-    print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
-    print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
+        # ---------------- Summary per Experiment ----------------
+        if len(all_accs) > 0:
+            print(f"\n[{exp_name} Summary]")
+            print(f"Mean Acc: {np.mean(all_accs):.5f} ± {np.std(all_accs):.5f}")
+            print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
-    parser.add_argument("--subjects", type=str, default="1", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
