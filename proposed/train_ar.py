@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader
 
 from data_loader import ARDataset
 from dual_attention import DualAttention
@@ -152,22 +152,22 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         # Task accuracy
         for t, p, l in zip(task, pred.cpu(), label.cpu()):
             t = str(t)
-            task_correct.setdefault(t, 0)
-            task_total.setdefault(t, 0)
-            task_correct[t] += int(p == l)
-            task_total[t] += 1
+            task_correct[t] = task_correct.get(t, 0) + int(p == l)
+            task_total[t] = task_total.get(t, 0) + 1
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
     avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
-    task_acc = {t: task_correct[t] / task_total[t] for t in task_total}
+
+    task_acc = {t: task_correct[t] / task_total[t] for t in task_total if task_total[t] > 0}
+    task_itr = {t: compute_itr(a, n_classes, trial_time) for t, a in task_acc.items()}
 
     # ITR
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return avg_loss, acc, task_acc, itr
+    return avg_loss, acc, task_acc, itr, task_itr
 
 
 # ===== Main (subject-wise session split) =====
@@ -250,7 +250,8 @@ def main(args):
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
             # best record
-            best_acc, best_itr, best_epoch, best_task_acc = 0.0, 0.0, 0, None
+            best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+            best_task_acc, best_task_itr = None, None
 
             # Train Loop
             for epoch in range(1, args.epochs + 1):
@@ -258,7 +259,7 @@ def main(args):
                     eeg_branch, stim_branch, temp_branch, dual_attn,
                     train_loader, optimizer, ce_criterion, device
                 )
-                test_loss, test_acc, task_acc, itr = evaluate(
+                test_loss, test_acc, task_acc, itr, task_itr = evaluate(
                     eeg_branch, stim_branch, temp_branch, dual_attn,
                     test_loader, ce_criterion, device,
                     n_classes=n_classes, trial_time=trial_time
@@ -271,8 +272,8 @@ def main(args):
                       f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                       f"ITR: {itr:.4f} bits/min")
 
-                for t, acc in task_acc.items():
-                    print(f"   Task {t}: {acc:.5f}")
+                for t in task_acc.keys():
+                    print(f"   Task {t:<6s} | Acc={task_acc[t]:.5f} | ITR={task_itr[t]:.4f}")
 
                 # TensorBoard logging
                 writer.add_scalar("Loss/Train", train_loss, epoch)
@@ -280,8 +281,9 @@ def main(args):
                 writer.add_scalar("Accuracy/Train", train_acc, epoch)
                 writer.add_scalar("Accuracy/Test", test_acc, epoch)
                 writer.add_scalar("ITR/Test", itr, epoch)
-                for t, acc in task_acc.items():
-                    writer.add_scalar(f"TaskAcc/{t}", acc, epoch)
+                for t in task_acc.keys():
+                    writer.add_scalar(f"TaskAcc/{t}", task_acc[t], epoch)
+                    writer.add_scalar(f"TaskITR/{t}", task_itr[t], epoch)
 
                 # update best record
                 if test_acc > best_acc:
@@ -289,6 +291,7 @@ def main(args):
                     best_itr = itr
                     best_epoch = epoch
                     best_task_acc = task_acc
+                    best_task_itr = task_itr
 
                     # Save Model
                     save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
@@ -303,22 +306,24 @@ def main(args):
                         "temp_branch": temp_branch.state_dict(),
                         "dual_attn": dual_attn.state_dict(),
                         "optimizer": optimizer.state_dict(),
-                        "best_task_acc": best_task_acc
+                        "best_task_acc": best_task_acc,
+                        "best_task_itr": best_task_itr
                     }, save_path)
 
                     print(f"\n[Save] Epoch {best_epoch} → Best model "
                           f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
                     print(f"Best Task Acc: {best_task_acc}")
+                    print(f"Best Task ITR: {best_task_itr}")
 
             writer.close()
+
             all_accs.append(best_acc)
             all_itrs.append(best_itr)
 
         # ---------------- Summary per Experiment ----------------
         if len(all_accs) > 0:
-            print(f"\n[{exp_name} Summary]")
-            print(f"Mean Acc: {np.mean(all_accs):.5f} ± {np.std(all_accs):.5f}")
-            print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
+            print(f"\n[{exp_name} Summary] Mean Acc: {np.mean(all_accs):.5f} ± {np.std(all_accs):.5f}")
+            print(f"[{exp_name} Summary] Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':
