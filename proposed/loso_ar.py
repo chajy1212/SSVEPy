@@ -248,9 +248,9 @@ def main(args):
 
             # Debug check
             train_labels_all = np.concatenate([dset.labels for dset in train_datasets])
-            print(f"[DEBUG] Train unique labels: {len(np.unique(train_labels_all))}")
-            print(f"[DEBUG] Test unique labels : {len(np.unique(test_dataset.labels))}")
-            print(f"[DEBUG] Model output dim    : {n_classes}\n")
+            print(f"[DEBUG] Train unique labels (block * trial) : {len(np.unique(train_labels_all))}")
+            print(f"[DEBUG] Test unique labels (block * trial)  : {len(np.unique(test_dataset.labels))}")
+            print(f"[DEBUG] Model output dim (freq * phase)     : {n_classes}\n")
 
             print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
