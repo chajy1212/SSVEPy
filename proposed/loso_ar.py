@@ -208,10 +208,10 @@ def main(args):
             # Build datasets
             train_datasets = []
             for s in train_subj_list:
-                train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="all"))
+                train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="train"))
 
             train_dataset = ConcatDataset(train_datasets)
-            test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="all")
+            test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="test")
 
             n_channels = test_dataset.C
             n_samples = test_dataset.T
@@ -245,6 +245,12 @@ def main(args):
                                       d_model=args.d_model,
                                       num_heads=4,
                                       proj_dim=n_classes).to(device)
+
+            # Debug check
+            train_labels_all = np.concatenate([dset.labels for dset in train_datasets])
+            print(f"[DEBUG] Train unique labels: {len(np.unique(train_labels_all))}")
+            print(f"[DEBUG] Test unique labels : {len(np.unique(test_dataset.labels))}")
+            print(f"[DEBUG] Model output dim    : {n_classes}\n")
 
             print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 

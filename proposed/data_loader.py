@@ -41,11 +41,39 @@ class ARDataset(Dataset):
 
         self.N, self.C, self.T = self.epochs.shape
 
+        # Filter tasks by experiment
+        valid_tasks_by_exp = {
+            "Exp1": ["LF", "MF"],
+            "Exp2": ["SFSP", "SFDP", "DFSP", "DFDP"],
+            "Exp3": ["DFDP1", "DFDP3", "DFDP5"]
+        }
+
+        valid_tasks = valid_tasks_by_exp.get(self.exp_name, None)
+        if valid_tasks is not None:
+            mask = np.isin(self.tasks, valid_tasks)
+            self.epochs = self.epochs[mask]
+            self.labels = self.labels[mask]
+            self.freqs = self.freqs[mask]
+            self.phases = self.phases[mask]
+            self.tasks = self.tasks[mask]
+            self.N = len(self.labels)
+            print(f"[FILTER] {self.exp_name}: Included tasks → {np.unique(self.tasks)}")
+
         # Map frequency ↔ class index
-        unique_freqs = sorted(np.unique(self.freqs))
-        self.freq2class = {f: i for i, f in enumerate(unique_freqs)}
-        self.class2freq = {i: f for f, i in self.freq2class.items()}
-        self.n_classes = len(unique_freqs)
+        freqs_rounded = np.round(self.freqs, 2)
+        phases_rounded = np.round(self.phases, 2)
+
+        # Combine unique pairs
+        unique_pairs = sorted(set(zip(freqs_rounded, phases_rounded)))
+
+        # Build mapping
+        self.freq_phase2class = {pair: i for i, pair in enumerate(unique_pairs)}
+        self.class2freq_phase = {i: pair for pair, i in self.freq_phase2class.items()}
+        self.n_classes = len(unique_pairs)
+
+        # Update attributes
+        self.freqs = freqs_rounded
+        self.phases = phases_rounded
 
         print(f"[INFO] Loaded {npz_file} | {self.exp_name}, Sub-{self.subject:02d}, {self.session}, Classes={self.n_classes}")
 
@@ -58,15 +86,13 @@ class ARDataset(Dataset):
 
         # Convert Hz label → class index
         freq_val = float(self.freqs[idx])
-        class_label = self.freq2class[freq_val]
-
-        # Phase
-        phase = float(self.phases[idx])
+        phase_val = float(self.phases[idx])
+        class_label = self.freq_phase2class[(freq_val, phase_val)]
 
         # Task name
         task = self.tasks[idx]
 
-        return eeg, class_label, freq_val, phase, task
+        return eeg, class_label, freq_val, phase_val, task
 
 
 class Nakanishi2015Dataset(Dataset):

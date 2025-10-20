@@ -38,6 +38,10 @@ class StimulusBranch(nn.Module):
         self.n_harmonics = n_harmonics
         self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
 
+        # Precompute time vector for efficiency
+        t = torch.arange(self.T, dtype=torch.float32) / self.sfreq
+        self.register_buffer("t", t)
+
     def forward(self, labels):
         """
         Args:
@@ -46,13 +50,14 @@ class StimulusBranch(nn.Module):
             feat: (B, D_stim)
         """
         B = labels.size(0)
-        t = torch.arange(self.T, dtype=torch.float32, device=labels.device) / self.sfreq
+        device = labels.device
+        t = self.t.unsqueeze(0).to(device)  # (1, T)
+        f = self.freqs[labels.long()]       # (B,)
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            f = torch.tensor([self.freqs[int(l)] for l in labels], dtype=torch.float32, device=labels.device)
-            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0))  # (B, T)
-            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t.unsqueeze(0))  # (B, T)
+            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t)  # (B, T)
+            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t)  # (B, T)
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
@@ -108,11 +113,10 @@ class StimulusBranchWithPhase(nn.Module):
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
-        # (B, T, 2*n_harmonics)
         stim_harm = torch.stack(harmonics, dim=-1).float()  # (B, T, 2*n_harmonics)
 
-        feat = self.encoder(stim_harm)  # (B, hidden_dim)
-        feat = self.proj(feat)  # (B, out_dim)
+        feat = self.encoder(stim_harm)                      # (B, hidden_dim)
+        feat = self.proj(feat)                              # (B, out_dim)
         return feat
 
 
