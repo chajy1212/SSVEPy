@@ -188,8 +188,8 @@ def main(args):
     else:
         subject_partition = {
             "Exp1": list(range(1, 15)),
-            # "Exp2": list(range(1, 14)) + [15],
-            # "Exp3": list(range(1, 9)) + list(range(16, 25))
+            "Exp2": list(range(1, 14)) + [15],
+            "Exp3": list(range(1, 9)) + list(range(16, 25))
         }
 
     for exp_name, subj_list in subject_partition.items():
