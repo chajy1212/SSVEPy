@@ -21,7 +21,8 @@ def load_raw(set_file: Path, fs: int):
 
     # sampling rate
     meta = json.loads(Path(json_file).read_text())
-    sfreq = float(meta.get("SamplingFrequency", fs))
+    # sfreq = float(meta.get("SamplingFrequency", fs))
+    orig_fs = float(meta.get("SamplingFrequency", fs))
 
     # load data
     data = np.fromfile(fdt_file, dtype=np.float32)
@@ -29,8 +30,15 @@ def load_raw(set_file: Path, fs: int):
     data = data.reshape((n_ch, n_times), order="F")
 
     # create Raw object
-    info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+    # info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+    info = mne.create_info(ch_names=ch_names, sfreq=orig_fs, ch_types="eeg")
     raw = mne.io.RawArray(data, info, verbose=False)
+
+    # Force resampling ===
+    if orig_fs != fs:
+        raw.resample(fs, npad="auto", verbose=False)
+        print(f"Resampled {set_file.name}: {orig_fs} Hz → {fs} Hz")
+
     return raw
 
 
@@ -55,7 +63,8 @@ def safe_float(x):
         return float(m[0]) if m else 0.0
 
 
-def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, T=2, pick_channels=None):
+# def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, T=2, pick_channels=None):
+def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=250, T=2, pick_channels=None):
     """
     Convert EEG dataset into compressed .npz files.
     """
@@ -147,8 +156,10 @@ def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, T=2, pick_channel
 # ===================== main =====================
 if __name__ == "__main__":
     BASE = "/home/brainlab/Workspace/jycha/SSVEP/data/26764735"
-    SAVE = "/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi"
+    # SAVE = "/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi"
+    SAVE = "/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi_250"
     TASKS = ["MF", "LF", "SFSP", "SFDP", "DFSP", "DFDP", "DFDP1", "DFDP3", "DFDP5"]
     PICKS = ['PO3', 'PO4', 'PO5', 'PO6', 'PO7', 'PO8', 'POZ', 'O1', 'O2', 'OZ']
 
-    convert_dataset_to_npz(BASE, SAVE, TASKS, fs=1024, T=2, pick_channels=PICKS)
+    # convert_dataset_to_npz(BASE, SAVE, TASKS, fs=1024, T=2, pick_channels=PICKS)
+    convert_dataset_to_npz(BASE, SAVE, TASKS, fs=250, T=2, pick_channels=PICKS)
