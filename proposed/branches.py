@@ -32,7 +32,9 @@ class StimulusBranch(nn.Module):
     """
     def __init__(self, freqs, T, sfreq=250.0, hidden_dim=128, n_harmonics=3):
         super().__init__()
-        self.freqs = freqs  # list or np.array of stimulus freqs
+        freqs_tensor = torch.tensor(freqs, dtype=torch.float32)
+        self.register_buffer("freqs", freqs_tensor)
+
         self.T = T
         self.sfreq = sfreq
         self.n_harmonics = n_harmonics
@@ -49,10 +51,13 @@ class StimulusBranch(nn.Module):
         Returns:
             feat: (B, D_stim)
         """
+        if isinstance(labels, (list, tuple, np.ndarray)):
+            labels = torch.tensor(labels)
+        labels = labels.long().to(self.freqs.device)
+
         B = labels.size(0)
-        device = labels.device
-        t = self.t.unsqueeze(0).to(device)  # (1, T)
-        f = self.freqs[labels.long()]       # (B,)
+        f = self.freqs[labels]  # (B,)
+        t = self.t.unsqueeze(0)  # (1, T)
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
