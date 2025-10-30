@@ -177,7 +177,7 @@ def main(args):
         print(f"\n========== [Subject {subj:02d}] ==========")
 
         # TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_dtn_stim_dual/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
 
         train_dataset = Lee2019Dataset(subjects=[subj], train=True, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset(subjects=[subj], train=False, pick_channels=args.pick_channels)
@@ -261,7 +261,7 @@ def main(args):
                 best_epoch = epoch
 
                 # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/full_model/model_path"
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_dtn_stim_dual/model_path"
                 save_path = os.path.join(save_dir, f"Lee2019_Sub{subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({

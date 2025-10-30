@@ -11,8 +11,8 @@ SSVEPy/
 │   ├── ablation_eegnet_dtn.py               # LOSO Ablation Study (EEGNet + DTN)
 │   ├── ablation_eegnet_stim.py              # LOSO Ablation Study (EEGNet + Stimulus)
 │   ├── ablation_eegnet_dtn_stim_concat.py   # LOSO Ablation Study (EEGNet + DTN + Stimulus + Concat Two Attentions)
+│   ├── ablation_eegnet_dtn_stim_dual.py     # LOSO Ablation Study (EEGNet + Stimulus + DTN + Dual Attention)
 │   ├── ablation_eegnet_dtn_stim_element.py  # LOSO Ablation Study (EEGNet + DTN + Stimulus + Element-wise sum Two Attentions)
-│   ├── ablation_full_model.py               # LOSO Ablation Study (EEGNet + DTN + Stimulus + Dual Attention)
 │   ├── ablation_only_eegnet.py              # LOSO Ablation Study (EEGNet only)
 │   ├── branches.py             		     # EEG, Stimulus, Template branch encoders
 │   ├── data_loader.py          		     # Dataset 정의
