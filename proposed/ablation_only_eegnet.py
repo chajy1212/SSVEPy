@@ -90,8 +90,8 @@ def train_one_epoch(eeg_branch, classifier, dataloader, optimizer, ce_criterion,
         optimizer.zero_grad()
 
         # Forward
-        feat = eeg_branch(eeg)     # (B, D_eeg)
-        logits = classifier(feat)  # (B, n_classes)
+        feat = eeg_branch(eeg, return_sequence=False)     # (B, D_eeg)
+        logits = classifier(feat)                         # (B, n_classes)
 
         loss = ce_criterion(logits, label)
         loss.backward()
@@ -124,7 +124,7 @@ def evaluate(eeg_branch, classifier, dataloader, ce_criterion, device, n_classes
     for eeg, label in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
-        feat = eeg_branch(eeg)
+        feat = eeg_branch(eeg, return_sequence=False)
         logits = classifier(feat)
 
         loss = ce_criterion(logits, label)
@@ -165,7 +165,7 @@ def main(args):
         print(f"\n========== [Subject {subj:02d}] ==========")
 
         # TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_only/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_only/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
 
         train_dataset = Lee2019Dataset(subjects=[subj], train=True, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset(subjects=[subj], train=False, pick_channels=args.pick_channels)
@@ -231,7 +231,7 @@ def main(args):
                 best_epoch = epoch
 
                 # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_only/model_path"
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_only/model_path"
                 save_path = os.path.join(save_dir, f"Lee2019_Sub{subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({

@@ -95,7 +95,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        eeg_feat = eeg_branch(eeg)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
@@ -139,9 +139,9 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
         freq, phase = freq.to(device), phase.to(device)
 
-        eeg_feat = eeg_branch(eeg)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(freq, phase)
-        temp_feat = temp_branch(eeg, label)
+        temp_feat = temp_branch(eeg, inference=True)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
@@ -217,7 +217,7 @@ def main(args):
                                      n_samples=n_samples,
                                      n_classes=n_classes,
                                      D_temp=args.d_query).to(device)
-        dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
+        dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
                                   d_query=args.d_query,
                                   d_model=args.d_model,
                                   num_heads=4,

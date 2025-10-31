@@ -95,7 +95,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)                                   # (B, D_eeg)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)             # (B, N, D_eeg)
         stim_feat = stim_branch(freq, phase)                         # (B, D_query)
         temp_feat = temp_branch(eeg, label)                          # (B, D_query)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
@@ -137,9 +137,9 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
         freq, phase = freq.to(device), phase.to(device)
 
-        eeg_feat = eeg_branch(eeg)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(freq, phase)
-        temp_feat = temp_branch(eeg, label)
+        temp_feat = temp_branch(eeg, inference=True)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
@@ -187,9 +187,9 @@ def main(args):
         subject_partition = {"Custom": subjects}
     else:
         subject_partition = {
-            "Exp1": list(range(1, 15)),
+            # "Exp1": list(range(1, 15)),
             "Exp2": list(range(1, 14)) + [15],
-            "Exp3": list(range(1, 9)) + list(range(16, 25))
+            # "Exp3": list(range(1, 9)) + list(range(16, 25))
         }
 
     for exp_name, subj_list in subject_partition.items():
@@ -234,7 +234,7 @@ def main(args):
                                          n_samples=n_samples,
                                          n_classes=n_classes,
                                          D_temp=args.d_query).to(device)
-            dual_attn = DualAttention(d_eeg=eeg_branch.out_dim,
+            dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
                                       d_query=args.d_query,
                                       d_model=args.d_model,
                                       num_heads=4,

@@ -12,16 +12,19 @@ class EEGBranch(nn.Module):
     """
     EEG branch using EEGNet as encoder.
     Input : (B, 1, C, T)
-    Output : (B, D_eeg) flattened EEG representation
+    Output:
+      - return_sequence=False: (B, D_flat = C*W)
+      - return_sequence=True : (B, N=W, D=C)  ← DualAttention 용
     """
     def __init__(self, chans, samples):
         super().__init__()
         self.encoder = EEGNet(chans=chans, samples=samples)
         self.out_dim = self.encoder.out_dim
+        self.feature_dim = self.encoder.feature_dim
+        self.sequence_len = self.encoder.sequence_len
 
-    def forward(self, x):
-        feat = self.encoder(x)  # (B, out_dim)
-        return feat
+    def forward(self, x, return_sequence=False):
+        return self.encoder(x, return_sequence=return_sequence)
 
 
 class StimulusBranch(nn.Module):
@@ -140,7 +143,14 @@ class TemplateBranch(nn.Module):
         # Projection: (B, n_features) → (B, D_temp)
         self.proj = nn.Linear(n_features, D_temp)
 
-    def forward(self, x, y=None):
-        _, feat = self.network(x, y, return_feat=True)      # (B, n_features)
+    def forward(self, x, y=None, inference=False):
+        """
+        inference=False: 학습 중엔 라벨을 사용해서 class prototype 업데이트 (DTN이 class별 평균 feature 갱신)
+        inference=True: 평가 중엔 라벨을 완전히 무시하고 pure EEG feature만 반환
+        """
+        if inference:
+            _, feat = self.network(x, None, return_feat=True)
+        else:
+            _, feat = self.network(x, y, return_feat=True)
         feat = self.proj(feat)                              # (B, D_temp)
         return feat

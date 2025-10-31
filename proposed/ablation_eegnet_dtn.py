@@ -93,8 +93,8 @@ def train_one_epoch(eeg_branch, temp_branch, attn_module, dataloader,
         optimizer.zero_grad()
 
         # Forward
-        eeg_feat = eeg_branch(eeg)                      # (B, D_eeg)
-        temp_feat = temp_branch(eeg, label)             # (B, D_query)
+        eeg_feat = eeg_branch(eeg, return_sequence=False)   # (B, D_eeg)
+        temp_feat = temp_branch(eeg, label)                 # (B, D_query)
         logits, _ = attn_module(eeg_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
@@ -130,8 +130,8 @@ def evaluate(eeg_branch, temp_branch, attn_module, dataloader,
     for eeg, label in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
-        eeg_feat = eeg_branch(eeg)
-        temp_feat = temp_branch(eeg, label)
+        eeg_feat = eeg_branch(eeg, return_sequence=False)
+        temp_feat = temp_branch(eeg, inference=True)
         logits, _ = attn_module(eeg_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
@@ -172,7 +172,7 @@ def main(args):
         print(f"\n========== [Subject {subj:02d}] ==========")
 
         # TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_dtn/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_dtn/runs/Lee2019_Sub{subj}_EEGNet_{ch_tag}")
 
         train_dataset = Lee2019Dataset(subjects=[subj], train=True, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset(subjects=[subj], train=False, pick_channels=args.pick_channels)
@@ -248,7 +248,7 @@ def main(args):
                 best_epoch = epoch
 
                 # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/eegnet_dtn/model_path"
+                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/ablation/session_split/eegnet_dtn/model_path"
                 save_path = os.path.join(save_dir, f"Lee2019_Sub{subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
