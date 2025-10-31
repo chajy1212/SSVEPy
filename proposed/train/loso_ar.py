@@ -244,7 +244,7 @@ def main(args):
                                       d_query=args.d_query,
                                       d_model=args.d_model,
                                       num_heads=4,
-                                      proj_dim=1).to(device)
+                                      proj_dim=n_classes).to(device)
 
             # Debug check
             train_labels_all = np.concatenate([dset.labels for dset in train_datasets])
