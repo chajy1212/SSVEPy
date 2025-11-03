@@ -145,12 +145,12 @@ class TemplateBranch(nn.Module):
 
     def forward(self, x, y=None, inference=False):
         """
-        inference=False: 학습 중엔 라벨을 사용해서 class prototype 업데이트 (DTN이 class별 평균 feature 갱신)
-        inference=True: 평가 중엔 라벨을 완전히 무시하고 pure EEG feature만 반환
+        inference=False: 학습 중에도 라벨을 사용하지 않고 pure EEG feature만 반환
+        inference=True : 평가 중에도 동일하게 pure EEG feature만 반환
         """
-        if inference:
-            _, feat = self.network(x, None, return_feat=True)
-        else:
-            _, feat = self.network(x, y, return_feat=True)
-        feat = self.proj(feat)                              # (B, D_temp)
+        # always label-independent EEG features
+        _, feat = self.network(x, None, return_feat=True)
+        if feat.dim() == 3:  # (B, n_bands, n_features)
+            feat = feat.mean(1)
+        feat = self.proj(feat)
         return feat

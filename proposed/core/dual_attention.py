@@ -53,7 +53,7 @@ class DualAttention(nn.Module):
 
         # concat [stim, temp] as queries
         query = torch.cat([stim, temp], dim=1)      # (B, 2, D)
-        key_value = eeg                             # (B, 1, D)
+        key_value = eeg                             # (B, N, D)
 
         # Normalization
         query = self.norm_q(query)
