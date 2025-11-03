@@ -6,7 +6,6 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -97,18 +96,14 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch,
 
         optimizer.zero_grad()
 
-        # Forward
-        eeg_feat = eeg_branch(eeg, return_sequence=False)            # (B, D_eeg)
-        stim_feat = stim_branch(label)                               # (B, D_query)
-        temp_feat = temp_branch(eeg, label)                          # (B, D_query)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        stim_feat = stim_branch(label)
+        temp_feat = temp_branch(eeg)
 
         _, attn_s = attn_eeg_stim(eeg_feat, stim_feat)
         _, attn_t = attn_eeg_temp(eeg_feat, temp_feat)
 
-        attn_s = F.layer_norm(attn_s, attn_s.shape[1:])
-        attn_t = F.layer_norm(attn_t, attn_t.shape[1:])
-
-        fused = attn_s + attn_t                         # Element-wise sum
+        fused = attn_s + attn_t      # Element-wise sum
         logits = fusion_head(fused)
 
         # CE loss
@@ -149,15 +144,12 @@ def evaluate(eeg_branch, stim_branch, temp_branch,
     for eeg, label in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
-        eeg_feat = eeg_branch(eeg, return_sequence=False)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(label)
-        temp_feat = temp_branch(eeg, inference=True)
+        temp_feat = temp_branch(eeg)
 
         _, attn_s = attn_eeg_stim(eeg_feat, stim_feat)
         _, attn_t = attn_eeg_temp(eeg_feat, temp_feat)
-
-        attn_s = F.layer_norm(attn_s, attn_s.shape[1:])
-        attn_t = F.layer_norm(attn_t, attn_t.shape[1:])
 
         fused = attn_s + attn_t          # Element-wise sum
         logits = fusion_head(fused)

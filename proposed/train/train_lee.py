@@ -93,11 +93,15 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # Forward
-        eeg_feat = eeg_branch(eeg, return_sequence=True)             # (B, N, D_eeg)
-        stim_feat = stim_branch(label)                               # (B, D_query)
-        temp_feat = temp_branch(eeg, label)                          # (B, D_query)
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
+        # EEG feature extraction
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
+
+        # Stimulus feature (no phase)
+        stim_feat = stim_branch(label)
+        temp_feat = temp_branch(eeg)
+
+        # Dual Attention forward
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         # CE loss
         loss = ce_criterion(logits, label)
@@ -136,7 +140,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(label)
-        temp_feat = temp_branch(eeg, inference=True)
+        temp_feat = temp_branch(eeg)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label)

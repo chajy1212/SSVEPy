@@ -100,7 +100,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # Stimulus feature with perturbation
         freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
         phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
-        stim_feat = stim_branch(freq_pert, phase_pert)      # (B, D_query)
+        stim_feat = stim_branch(freq_pert, phase_pert)
 
         # Template feature (label-independent)
         temp_feat = temp_branch(eeg)
@@ -151,7 +151,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         # Stimulus feature with perturbation
         freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
         phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
-        stim_feat = stim_branch(freq_pert, phase_pert)      # (B, D_query)
+        stim_feat = stim_branch(freq_pert, phase_pert)
 
         # Template feature (label-independent)
         temp_feat = temp_branch(eeg)
@@ -204,8 +204,8 @@ def main(args):
         subject_partition = {"Custom": subjects}
     else:
         subject_partition = {
-            "Exp1": list(range(1, 15)),
-            # "Exp2": list(range(1, 14)) + [15],
+            # "Exp1": list(range(1, 15)),
+            "Exp2": list(range(1, 14)) + [15],
             # "Exp3": list(range(1, 9)) + list(range(16, 25))
         }
 

@@ -92,9 +92,8 @@ def train_one_epoch(eeg_branch, temp_branch, attn_module, dataloader,
 
         optimizer.zero_grad()
 
-        # Forward
-        eeg_feat = eeg_branch(eeg, return_sequence=False)   # (B, D_eeg)
-        temp_feat = temp_branch(eeg, label)                 # (B, D_query)
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        temp_feat = temp_branch(eeg)
         logits, _ = attn_module(eeg_feat, temp_feat)
 
         loss = ce_criterion(logits, label)
@@ -131,7 +130,7 @@ def evaluate(eeg_branch, temp_branch, attn_module, dataloader,
         eeg, label = eeg.to(device), label.to(device)
 
         eeg_feat = eeg_branch(eeg, return_sequence=False)
-        temp_feat = temp_branch(eeg, inference=True)
+        temp_feat = temp_branch(eeg)
         logits, _ = attn_module(eeg_feat, temp_feat)
 
         loss = ce_criterion(logits, label)

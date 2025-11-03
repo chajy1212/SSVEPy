@@ -94,14 +94,22 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # Forward
-        eeg_feat = eeg_branch(eeg, return_sequence=True)             # (B, N, D_eeg)
-        stim_feat = stim_branch(freq, phase)                         # (B, D_query)
-        temp_feat = temp_branch(eeg, label)                          # (B, D_query)
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)  # (B, n_classes)
+        # EEG feature extraction
+        eeg_feat = eeg_branch(eeg, return_sequence=True)
+
+        # Stimulus feature with perturbation
+        freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
+        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
+        stim_feat = stim_branch(freq_pert, phase_pert)
+
+        # Template feature (label-independent)
+        temp_feat = temp_branch(eeg)
+
+        # Dual Attention forward
+        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         # CE loss
-        loss = ce_criterion(logits, label)
+        loss = ce_criterion(logits, label) + dual_attn.loss_entropy
         loss.backward()
         optimizer.step()
 
@@ -137,12 +145,21 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
         freq, phase = freq.to(device), phase.to(device)
 
+        # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        stim_feat = stim_branch(freq, phase)
-        temp_feat = temp_branch(eeg, inference=True)
+
+        # Stimulus feature with perturbation
+        freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
+        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
+        stim_feat = stim_branch(freq_pert, phase_pert)
+
+        # Template feature (label-independent)
+        temp_feat = temp_branch(eeg)
+
+        # Dual Attention forward
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        loss = ce_criterion(logits, label)
+        loss = ce_criterion(logits, label) + dual_attn.loss_entropy
         total_loss += loss.item() * label.size(0)
 
         _, pred = logits.max(1)
