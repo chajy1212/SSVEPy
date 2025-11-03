@@ -1,15 +1,16 @@
 # -*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
-import numpy as np
+import math
 
 
 # ===== Base Simple Attention =====
 class SimpleAttention(nn.Module):
     """
     Generic Simple Attention
-    EEG feature = Key/Value
-    Other feature (Stimulus or Template) = Query
+    EEG feature = Key/Value  (B, T, D_eeg)
+    Other feature (Stimulus or Template) = Query   (B, D_query)
+    Output: logits (B, n_classes), attention feature (B, D_model)
     """
     def __init__(self, d_eeg, d_query, d_model, n_classes):
         super().__init__()
@@ -20,17 +21,22 @@ class SimpleAttention(nn.Module):
 
     def forward(self, eeg_feat, query_feat):
         """
-        eeg_feat:   (B, D_eeg)
-        query_feat: (B, D_query)  -> Stimulus or Template
+        eeg_feat: (B, T, D_eeg)
+        query_feat: (B, D_query)
         """
-        K = self.key(eeg_feat)        # (B, D_model)
-        V = self.value(eeg_feat)      # (B, D_model)
-        Q = self.query(query_feat)    # (B, D_model)
+        K = self.key(eeg_feat)        # (B, T, D_model)
+        V = self.value(eeg_feat)      # (B, T, D_model)
+        Q = self.query(query_feat).unsqueeze(1)    # (B, T, D_model)
 
-        attn_score = (Q * K).sum(-1, keepdim=True) / np.sqrt(K.size(-1))  # (B, 1)
-        attn_weights = torch.sigmoid(attn_score)                          # (B, 1)
+        # --- Attention computation ---
+        # Dot-product similarity between Query and Key
+        attn_score = (Q * K).sum(-1, keepdim=True) / math.sqrt(K.size(-1) + 1e-8)  # (B, T, 1)
+        attn_weights = torch.sigmoid(attn_score + 0.1)  # stable gating between 0~1
 
-        attn = attn_weights * V   # (B, D_model)
+        # --- Weighted sum over time dimension ---
+        attn = (attn_weights * V).mean(dim=1)  # (B, D_model)
+
+        # --- Classification ---
         logits = self.proj(attn)  # (B, n_classes)
         return logits, attn
 
