@@ -225,8 +225,6 @@ def main(args):
 
         print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-        exit()
-
         params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
                  list(temp_branch.parameters()) + list(dual_attn.parameters())
 
