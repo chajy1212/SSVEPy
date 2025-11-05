@@ -209,19 +209,37 @@ class Lee2019Dataset(Dataset):
 
 
 class Lee2019Dataset_LOSO(Dataset):
+    """
+    Leave-One-Subject-Out (LOSO) compatible dataset for Lee2019.
+    Loads all subjects once, then selects only the given ones by masking.
+    """
+    _cached_data = None
+
     def __init__(self, subjects=[1], pick_channels="all"):
         super().__init__()
         paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
 
-        X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
+        if Lee2019Dataset_LOSO._cached_data is None:
+            print("[INFO] Loading full Lee2019 dataset (only once)...")
+            X_all, labels_all, meta_all = paradigm.get_data(dataset=dataset, subjects=list(range(1, 55)))
+            Lee2019Dataset_LOSO._cached_data = (X_all, labels_all, meta_all)
+        else:
+            X_all, labels_all, meta_all = Lee2019Dataset_LOSO._cached_data
+
+        # Subject filtering
+        subject_ids = np.array(meta_all['subject'])
+        mask = np.isin(subject_ids, subjects)
+
+        X = X_all[mask]
+        labels = np.array(labels_all)[mask]
 
         le = LabelEncoder()
         encoded_labels = le.fit_transform(labels)
         self.labels = torch.tensor(encoded_labels, dtype=torch.long)
         self.freqs = le.classes_.astype(float)
+        self.subjects = subject_ids[mask]
 
-        # Channel mapping (ch1 ~ ch62)
         mapping_lee2019 = {
             "ch1": "Fp1", "ch2": "Fp2", "ch3": "Fp7", "ch4": "F3", "ch5": "Fz", "ch6": "F4", "ch7": "F8",
             "ch8": "FC5", "ch9": "FC1", "ch10": "FC2", "ch11": "FC6", "ch12": "T7", "ch13": "C3",
@@ -236,34 +254,30 @@ class Lee2019Dataset_LOSO(Dataset):
         }
 
         ch_names = [mapping_lee2019.get(f"ch{i + 1}", f"ch{i + 1}") for i in range(X.shape[1])]
-
         info = mne.create_info(ch_names=ch_names, sfreq=1000.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
 
         if pick_channels != "all":
             raw.pick(pick_channels)
 
-        # Downsample 1000 → 250 Hz
         raw.resample(250.0, npad="auto")
-
-        # Band-pass filter (1–40 Hz)
         raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
-
-        # Average reference
         raw.set_eeg_reference('average', projection=False)
 
-        self.epochs = raw.get_data().astype(np.float32)  # (N,C,T)
+        self.epochs = raw.get_data().astype(np.float32)
         self.N, self.C, self.T = self.epochs.shape
         self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
         self.sfreq = raw.info["sfreq"]
 
+        print(f"[Check] Subjects in this dataset instance: {np.unique(self.subjects)}")
+        print(f"[Check] Loaded {self.N} trials, {self.n_classes} classes.\n")
 
     def __len__(self):
         return self.N
 
     def __getitem__(self, idx):
-        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1,C,T)
+        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)
         label = int(self.labels[idx])
         return eeg, label
 

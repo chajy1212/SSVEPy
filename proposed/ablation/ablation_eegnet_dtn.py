@@ -92,7 +92,7 @@ def train_one_epoch(eeg_branch, temp_branch, attn_module, dataloader,
 
         optimizer.zero_grad()
 
-        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        eeg_feat = eeg_branch(eeg, return_sequence=False)
         temp_feat = temp_branch(eeg)
         logits, _ = attn_module(eeg_feat, temp_feat)
 

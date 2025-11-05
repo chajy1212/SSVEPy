@@ -90,7 +90,7 @@ def train_one_epoch(eeg_branch, classifier, dataloader, optimizer, ce_criterion,
         optimizer.zero_grad()
 
         # EEG feature extraction
-        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        eeg_feat = eeg_branch(eeg, return_sequence=False)
         logits = classifier(eeg_feat)
 
         loss = ce_criterion(logits, label)
@@ -125,7 +125,7 @@ def evaluate(eeg_branch, classifier, dataloader, ce_criterion, device, n_classes
         eeg, label = eeg.to(device), label.to(device)
 
         # EEG feature extraction
-        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        eeg_feat = eeg_branch(eeg, return_sequence=False)
         logits = classifier(eeg_feat)
 
         loss = ce_criterion(logits, label)

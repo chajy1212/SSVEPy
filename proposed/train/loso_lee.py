@@ -196,6 +196,8 @@ def main(args):
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
+        print(f"[INFO] Train subjects: {np.unique(train_dataset.subjects)}")
+        print(f"[INFO] Test subjects: {np.unique(test_dataset.subjects)}")
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -222,6 +224,8 @@ def main(args):
                                   proj_dim=n_classes).to(device)
 
         print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+
+        exit()
 
         params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
                  list(temp_branch.parameters()) + list(dual_attn.parameters())
