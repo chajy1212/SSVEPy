@@ -287,7 +287,7 @@ class TorchBETADataset(Dataset):
         """
         subjects: list of subject numbers (e.g. [16,17,...])
         data_root: path to folder containing the .mat files / BETA data
-        pick_channels: “all” 또는 채널 이름 리스트
+        pick_channels: “all” or list of channel names
         """
         # Initialize toolbox dataset
         # The BETADataset constructor takes `path` (root) and optional support path etc.
