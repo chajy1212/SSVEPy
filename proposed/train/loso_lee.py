@@ -88,7 +88,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label in dataloader:
+    for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
         optimizer.zero_grad()
@@ -135,11 +135,11 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label in dataloader:
+    for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(torch.zeros_like(label))
         temp_feat = temp_branch(eeg)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
@@ -201,6 +201,11 @@ def main(args):
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
         print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+
+        print("Unique train labels:", np.unique(train_dataset.labels))
+        print("Unique test labels:", np.unique(test_dataset.labels))
+        print("Stimulus freqs train:", train_dataset.freqs)
+        print("Stimulus freqs test:\n", test_dataset.freqs)
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)

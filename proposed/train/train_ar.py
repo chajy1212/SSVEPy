@@ -204,8 +204,8 @@ def main(args):
         subject_partition = {"Custom": subjects}
     else:
         subject_partition = {
-            # "Exp1": list(range(1, 15)),
-            "Exp2": list(range(1, 14)) + [15],
+            "Exp1": list(range(1, 15)),
+            # "Exp2": list(range(1, 14)) + [15],
             # "Exp3": list(range(1, 9)) + list(range(16, 25))
         }
 

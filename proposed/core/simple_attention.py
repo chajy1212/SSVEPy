@@ -51,6 +51,3 @@ class SimpleAttention_EEG_Stimulus(SimpleAttention):
 class SimpleAttention_EEG_Template(SimpleAttention):
     def forward(self, eeg_feat, temp_feat):
         return super().forward(eeg_feat, temp_feat)
-
-
-

@@ -9,24 +9,32 @@ class EEGNet(nn.Module):
         self.chans = chans
         self.samples = samples
 
+        # First temporal convolution
         self.conv1 = nn.Conv2d(1, F1, (1, kernLength), padding=(0, kernLength // 2), bias=False)
         self.bn1 = nn.BatchNorm2d(F1)
 
+        # Depthwise spatial convolution
         self.depthwiseConv = nn.Conv2d(F1, F1 * D, (chans, 1), groups=F1, bias=False)
         self.bn2 = nn.BatchNorm2d(F1 * D)
         self.elu = nn.ELU()
         self.avgpool1 = nn.AvgPool2d((1, 4))
         self.drop1 = nn.Dropout(dropoutRate)
 
+        # Separable convolution (temporal filtering)
         self.separableConv = nn.Conv2d(F1 * D, F2, (1, 16), padding=(0, 8), bias=False)
         self.bn3 = nn.BatchNorm2d(F2)
         self.avgpool2 = nn.AvgPool2d((1, 8))
         self.drop2 = nn.Dropout(dropoutRate)
 
+        # Compute output dimensions dynamically
         with torch.no_grad():
-            dummy = torch.zeros(1, 1, chans, samples)   # (B,1,C,T)
+            dummy = torch.zeros(1, 1, chans, samples)  # (B,1,C,T)
             out = self.forward_features(dummy)
-            self.out_dim = out.view(1, -1).shape[1]
+            B, C, H, W = out.shape
+            self.feature_dim = C
+            self.sequence_len = W
+            self.out_dim = C * W  # legacy flatten size
+
 
     def forward_features(self, x):
         x = self.conv1(x)
@@ -41,9 +49,22 @@ class EEGNet(nn.Module):
         x = self.elu(x)
         x = self.avgpool2(x)
         x = self.drop2(x)
-        return x
+        return x                    # (B, F2, 1, W')
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = x.view(x.size(0), -1)   # flatten
-        return x
+
+    def forward(self, x, return_sequence=False):
+        """
+        Args:
+            x: (B, 1, chans, samples)
+            return_sequence: if True, return (B, N, D) for attention
+        """
+        x = self.forward_features(x)  # (B, F2, 1, W')
+        B, C, H, W = x.shape
+
+        if return_sequence:
+            # Convert (B, C, 1, W) → (B, W, C)
+            x = x.squeeze(2).permute(0, 2, 1).contiguous()  # (B, N=W, D=C)
+            return x  # sequence for attention: (B, N, D)
+        else:
+            # Legacy mode (for classifier)
+            return x.view(B, -1)

@@ -209,36 +209,27 @@ class Lee2019Dataset(Dataset):
 
 
 class Lee2019Dataset_LOSO(Dataset):
-    """
-    Leave-One-Subject-Out (LOSO) compatible dataset for Lee2019.
-    Loads all subjects once, then selects only the given ones by masking.
-    """
-    _cached_data = None
-
     def __init__(self, subjects=[1], pick_channels="all"):
         super().__init__()
         paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
 
-        if Lee2019Dataset_LOSO._cached_data is None:
-            print("[INFO] Loading full Lee2019 dataset (only once)...")
-            X_all, labels_all, meta_all = paradigm.get_data(dataset=dataset, subjects=list(range(1, 55)))
-            Lee2019Dataset_LOSO._cached_data = (X_all, labels_all, meta_all)
-        else:
-            X_all, labels_all, meta_all = Lee2019Dataset_LOSO._cached_data
+        X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
-        # Subject filtering
-        subject_ids = np.array(meta_all['subject'])
-        mask = np.isin(subject_ids, subjects)
+        # 피험자 필드 추가
+        subj_ids = np.array(meta['subject'])
 
-        X = X_all[mask]
-        labels = np.array(labels_all)[mask]
+        # 대상 피험자만 선택
+        subj_mask = np.isin(subj_ids, subjects)
+        X = X[subj_mask]
+        labels = labels[subj_mask]
+        self.subjects = subj_ids[subj_mask]
 
+        # 라벨 인코딩
         le = LabelEncoder()
         encoded_labels = le.fit_transform(labels)
         self.labels = torch.tensor(encoded_labels, dtype=torch.long)
         self.freqs = le.classes_.astype(float)
-        self.subjects = subject_ids[mask]
 
         mapping_lee2019 = {
             "ch1": "Fp1", "ch2": "Fp2", "ch3": "Fp7", "ch4": "F3", "ch5": "Fz", "ch6": "F4", "ch7": "F8",
@@ -270,16 +261,14 @@ class Lee2019Dataset_LOSO(Dataset):
         self.ch_names = raw.info["ch_names"]
         self.sfreq = raw.info["sfreq"]
 
-        print(f"[Check] Subjects in this dataset instance: {np.unique(self.subjects)}")
-        print(f"[Check] Loaded {self.N} trials, {self.n_classes} classes.\n")
-
     def __len__(self):
         return self.N
 
     def __getitem__(self, idx):
         eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)
         label = int(self.labels[idx])
-        return eeg, label
+        subj = int(self.subjects[idx])  # 피험자 ID와 함께 반환
+        return eeg, label, subj
 
 
 class TorchBETADataset(Dataset):
