@@ -139,8 +139,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        stim_feat = stim_branch(label)
-        # stim_feat = stim_branch(torch.zeros_like(label))
+        stim_feat = stim_branch(torch.zeros_like(label))
         temp_feat = temp_branch(eeg)
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
