@@ -101,7 +101,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch,
         eeg_feat = eeg_branch(eeg, return_sequence=False)
 
         # Stimulus feature (no phase)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(torch.zeros_like(label))
         temp_feat = temp_branch(eeg)
 
         _, attn_s = attn_eeg_stim(eeg_feat, stim_feat)

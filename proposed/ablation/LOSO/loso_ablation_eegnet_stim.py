@@ -94,7 +94,7 @@ def train_one_epoch(eeg_branch, stim_branch, attn_module, dataloader,
 
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=False)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(torch.zeros_like(label))
         logits, _ = attn_module(eeg_feat, stim_feat)
 
         # CE loss

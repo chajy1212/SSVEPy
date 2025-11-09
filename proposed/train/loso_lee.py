@@ -97,7 +97,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # Stimulus feature (no phase)
-        stim_feat = stim_branch(label)
+        stim_feat = stim_branch(torch.zeros_like(label))
         temp_feat = temp_branch(eeg)
 
         # Dual Attention forward
