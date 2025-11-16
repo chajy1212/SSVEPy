@@ -13,16 +13,16 @@ SSVEPy/
 │   │   ├── simple_attention.py                             # 단일 attention baseline
 │   │   └── stimulus.py                                     # StimulusEncoder — sin/cos reference 신호 latent feature 인코딩
 │   │
-│   ├── modules/
+│   ├── module/
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
 │   │   └── data_loader.py                                  # EEG 데이터셋 로더
 │   │
-│   ├── training/
+│   ├── train/
 │   │   ├── train_ar.py                                     # AR dataset — session split
 │   │   ├── train_lee.py                                    # Lee2019 dataset — session split
 │   │   ├── train_nakanishi.py                              # Nakanishi2015 dataset — random split
-│   │   ├── train_beta.py                                   # BETA dataset — LOSO
 │   │   ├── loso_ar.py                                      # AR dataset — LOSO
+│   │   ├── loso_beta.py                                    # BETA dataset — LOSO
 │   │   ├── loso_lee.py                                     # Lee2019 dataset — LOSO
 │   │   └── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
 │   │
