@@ -44,27 +44,27 @@ class StimulusBranch(nn.Module):
         self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
 
         # Precompute time vector for efficiency
-        t = torch.arange(T, dtype=torch.float32) / sfreq
+        t = torch.arange(self.T, dtype=torch.float32) / self.sfreq
         self.register_buffer("t", t)
 
-    def forward(self, freq):
+    def forward(self, freqs):
         """
         Args:
             freq: (B,) adjusted freq
         Returns:
             feat: (B, D_stim)
         """
-        if isinstance(freq, (list, tuple)):
-            labels = torch.tensor(freq, dtype=torch.float32)
-        freq = freq.float().to(self.t.device)
-        freq = freq.view(-1, 1)  # (B, 1)
+        if freqs.ndim == 1:
+            freqs = freqs.unsqueeze(1)  # (B, 1)
 
+        B = freqs.size(0)
         t = self.t.unsqueeze(0)  # (1, T)
+
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            sin_h = torch.sin(2 * np.pi * h * freq * t)  # (B, T)
-            cos_h = torch.cos(2 * np.pi * h * freq * t)  # (B, T)
+            sin_h = torch.sin(2 * np.pi * h * freqs * t)  # (B, T)
+            cos_h = torch.cos(2 * np.pi * h * freqs * t)  # (B, T)
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
