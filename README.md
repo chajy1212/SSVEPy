@@ -28,6 +28,7 @@ SSVEPy/
 │   │   ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
 │   │   ├── exp_ar.py                                       # AR dataset — Auto-Estimated session split
 │   │   ├── exp_lee.py                                      # Lee2019 dataset — Auto-Estimated session split
+│   │   ├── exp_nakanishi.py                                # Nakanishi2015 dataset — Auto-Estimated random split
 │   │   ├── exp_loso_ar.py                                  # AR dataset — Auto-Estimated LOSO
 │   │   ├── exp_loso_beta.py                                # BETA dataset — Auto-Estimated LOSO
 │   │   ├── exp_loso_lee.py                                 # Lee2019 dataset — Auto-Estimated LOSO
