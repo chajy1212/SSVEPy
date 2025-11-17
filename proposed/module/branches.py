@@ -33,10 +33,10 @@ class StimulusBranch(nn.Module):
     Input : (B, T, 2) sinusoidal references (sin, cos)
     Output: (B, D_stim)
     """
-    def __init__(self, freqs, T, sfreq=250.0, hidden_dim=128, n_harmonics=3):
+    def __init__(self, T, sfreq=250.0, hidden_dim=128, n_harmonics=3):
         super().__init__()
-        freqs_tensor = torch.tensor(freqs, dtype=torch.float32)
-        self.register_buffer("freqs", freqs_tensor)
+        # freqs_tensor = torch.tensor(freqs, dtype=torch.float32)
+        # self.register_buffer("freqs", freqs_tensor)
 
         self.T = T
         self.sfreq = sfreq
@@ -44,28 +44,27 @@ class StimulusBranch(nn.Module):
         self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
 
         # Precompute time vector for efficiency
-        t = torch.arange(self.T, dtype=torch.float32) / self.sfreq
+        t = torch.arange(T, dtype=torch.float32) / sfreq
         self.register_buffer("t", t)
 
-    def forward(self, labels):
+    def forward(self, freq):
         """
         Args:
-            labels: (B,) class indices
+            freq: (B,) adjusted freq
         Returns:
             feat: (B, D_stim)
         """
-        if isinstance(labels, (list, tuple, np.ndarray)):
-            labels = torch.tensor(labels)
-        labels = labels.long().to(self.freqs.device)
+        if isinstance(freq, (list, tuple)):
+            labels = torch.tensor(freq, dtype=torch.float32)
+        freq = freq.float().to(self.t.device)
+        freq = freq.view(-1, 1)  # (B, 1)
 
-        B = labels.size(0)
-        f = self.freqs[labels]  # (B,)
         t = self.t.unsqueeze(0)  # (1, T)
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
-            sin_h = torch.sin(2 * np.pi * h * f.unsqueeze(1) * t)  # (B, T)
-            cos_h = torch.cos(2 * np.pi * h * f.unsqueeze(1) * t)  # (B, T)
+            sin_h = torch.sin(2 * np.pi * h * freq * t)  # (B, T)
+            cos_h = torch.cos(2 * np.pi * h * freq * t)  # (B, T)
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
