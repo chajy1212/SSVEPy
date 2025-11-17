@@ -7,11 +7,12 @@ SSVEPy/
 │
 ├── proposed/
 │   ├── core/
-│   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
 │   │   ├── DTN.py                                          # Dynamic Template Network
-│   │   ├── dual_attention.py                               # Dual Attention 모듈 — EEG ↔ Stimulus/Template
+│   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
+│   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
 │   │   ├── simple_attention.py                             # 단일 attention baseline
-│   │   └── stimulus.py                                     # StimulusEncoder — sin/cos reference 신호 latent feature 인코딩
+│   │   ├── stimulus.py                                     # StimulusEncoder — sin/cos reference 신호 latent feature 인코딩
+│   │   └── stimulus_auto_estimator.py                      # 자극 주파수 자동 보정
 │   │
 │   ├── module/
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
