@@ -7,7 +7,7 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 
 from data_loader import ARDataset
 from dual_attention import DualAttention
@@ -188,7 +188,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     return avg_loss, acc, task_acc, itr, task_itr
 
 
-# ===== Main (subject-wise session split) =====
+# ===== Main (LOSO) =====
 def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -214,26 +214,32 @@ def main(args):
         print(f"\n========== [{exp_name}] Subjects: {subj_list} ==========")
         all_accs, all_itrs = [], []
 
-        for subj in subj_list:
-            print(f"\n========== [Subject {subj:02d}] ==========")
+        for test_subj in subj_list:
+            print(f"\n========== [Test Subject {test_subj:02d}] ==========")
 
-            # TensorBoard writer
-            writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpAR{exp_name}_Sub{subj}_EEGNet_{ch_tag}")
+            # Train/Test subject split
+            train_subj_list = [s for s in subj_list if s != test_subj]
 
-            try:
-                train_dataset = ARDataset(args.ar_data_root, subj, exp_name, session="train")
-                test_dataset = ARDataset(args.ar_data_root, subj, exp_name, session="test")
-            except FileNotFoundError as e:
-                print(e)
-                continue
+            # per-subject TensorBoard writer
+            writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpLOSOAR{exp_name}_sub{test_subj}_EEGNet_{ch_tag}")
 
-            n_channels = train_dataset.C
-            n_samples = train_dataset.T
-            n_classes = train_dataset.n_classes
-            sfreq = train_dataset.sfreq
+            # Build datasets
+            train_datasets = []
+            for s in train_subj_list:
+                train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="train"))
+
+            train_dataset = ConcatDataset(train_datasets)
+            test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="test")
+
+            n_channels = test_dataset.C
+            n_samples = test_dataset.T
+            n_classes = test_dataset.n_classes
+            sfreq = test_dataset.sfreq
             trial_time = n_samples / sfreq
 
             print(f"[INFO] Dataset: AR")
+            print(f"[INFO] Train subjects: {train_subj_list}")
+            print(f"[INFO] Test subject: {test_subj}")
             print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
             print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
             print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
@@ -257,6 +263,12 @@ def main(args):
                                       d_model=args.d_model,
                                       num_heads=4,
                                       proj_dim=n_classes).to(device)
+
+            # Debug check
+            train_labels_all = np.concatenate([dset.labels for dset in train_datasets])
+            print(f"[DEBUG] Train unique labels (block * trial) : {len(np.unique(train_labels_all))}")
+            print(f"[DEBUG] Test unique labels (block * trial)  : {len(np.unique(test_dataset.labels))}")
+            print(f"[DEBUG] Model output dim (freq * phase)     : {n_classes}\n")
 
             print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
@@ -322,7 +334,7 @@ def main(args):
 
                     # Save Model
                     save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                    save_path = os.path.join(save_dir, f"ExpAR{exp_name}_Sub{subj}_EEGNet_{ch_tag}.pth")
+                    save_path = os.path.join(save_dir, f"ExpLOSOAR{exp_name}_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
                     torch.save({
                         "epoch": best_epoch,
