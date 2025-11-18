@@ -246,9 +246,9 @@ def main(args):
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     auto_estimator = StimulusAutoEstimator(
-        freq_width=1.5,
-        smooth_window=5,
-        min_amp_threshold=0.05,
+        freq_width=0.8,
+        smooth_window=2,
+        min_amp_threshold=1e-8,
         debug=True
     )
 
