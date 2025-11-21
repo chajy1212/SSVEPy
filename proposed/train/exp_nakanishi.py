@@ -81,7 +81,7 @@ def parse_subjects(subjects_arg, dataset_name=""):
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                     dataloader, optimizer, ce_criterion, device,
-                    auto_estimator, freqs, sfreq):
+                    auto_estimator, sfreq):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -95,14 +95,11 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # ===== nominal freq 생성 =====
-        nominal_freq = torch.tensor([freqs[l] for l in label.cpu().numpy()], dtype=torch.float32, device=device)
-
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # ===== StimulusAutoEstimator 적용 =====
-        adj_freq = auto_estimator.estimate(eeg, nominal_freq, sfreq)
+        adj_freq = auto_estimator.estimate(eeg, sfreq)
         stim_feat = stim_branch(adj_freq)
 
         # ===== Template =====
@@ -135,7 +132,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
              dataloader, ce_criterion, device, n_classes, trial_time,
-             auto_estimator, freqs, sfreq):
+             auto_estimator, sfreq):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -147,14 +144,11 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     for eeg, label in dataloader:
         eeg, label = eeg.to(device), label.to(device)
 
-        # ===== nominal freq 생성 =====
-        nominal_freq = torch.tensor([freqs[l] for l in label.cpu().numpy()], dtype=torch.float32, device=device)
-
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # ===== StimulusAutoEstimator 적용 =====
-        adj_freq = auto_estimator.estimate(eeg, nominal_freq, sfreq)
+        adj_freq = auto_estimator.estimate(eeg, sfreq)
         stim_feat = stim_branch(adj_freq)
 
         # ===== Template =====
@@ -246,7 +240,8 @@ def main(args):
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     auto_estimator = StimulusAutoEstimator(
-        freq_width=0.8,
+        search_range=(9.0, 15.0),
+        freq_step=0.05,
         smooth_window=2,
         min_amp_threshold=1e-8,
         debug=True
@@ -260,13 +255,13 @@ def main(args):
         train_loss, train_acc = train_one_epoch(
             eeg_branch, stim_branch, temp_branch, dual_attn,
             train_loader, optimizer, ce_criterion, device,
-            auto_estimator, freqs, sfreq
+            auto_estimator, sfreq
         )
         test_loss, test_acc, itr = evaluate(
             eeg_branch, stim_branch, temp_branch, dual_attn,
             test_loader, ce_criterion, device,
             n_classes=n_classes, trial_time=trial_time,
-            auto_estimator=auto_estimator, freqs=freqs, sfreq=sfreq
+            auto_estimator=auto_estimator, sfreq=sfreq
         )
 
         scheduler.step()

@@ -92,7 +92,6 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for batch_idx, (eeg, label, freq, _) in enumerate(dataloader):
         eeg, label = eeg.to(device), label.to(device)
-        freq = freq.to(device)
 
         optimizer.zero_grad()
 
@@ -100,7 +99,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # Stimulus → 무조건 자동 보정 (dataset agnostic)
-        adj_freq = auto_estimator.estimate(eeg, freq, sfreq)
+        adj_freq = auto_estimator.estimate(eeg, sfreq)
         stim_feat = stim_branch(adj_freq)
 
         # Template feature (label-independent)
@@ -148,13 +147,12 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     for eeg, label, freq, _ in dataloader:
         eeg, label = eeg.to(device), label.to(device)
-        freq = freq.to(device)
 
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # Stimulus → 무조건 자동 보정 (dataset agnostic)
-        adj_freq = auto_estimator.estimate(eeg, freq, sfreq)
+        adj_freq = auto_estimator.estimate(eeg, sfreq)
         stim_feat = stim_branch(adj_freq)
 
         # Template feature (label-independent)
@@ -252,7 +250,8 @@ def main(args):
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
         auto_estimator = StimulusAutoEstimator(
-            freq_width=1.5,
+            search_range=(7.5, 16.0),
+            freq_step=0.05,
             smooth_window=5,
             min_amp_threshold=0.05,
             debug=True
