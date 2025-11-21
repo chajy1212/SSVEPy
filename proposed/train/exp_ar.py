@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from data_loader import ARDataset
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
-from stimulus_auto_estimator import StimulusAutoEstimator
+from stimulus_auto_estimator import StimulusAutoEstimator, ARExp1_AutoEstimator
 
 
 # ===== Reproducibility =====
@@ -266,8 +266,9 @@ def main(args):
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
             # Exp1
-            auto_estimator = StimulusAutoEstimator(
-                search_range=(7.5, 31.0),
+            auto_estimator = ARExp1_AutoEstimator(
+                lf_range=(7.5, 15.5),  # LF
+                mf_range=(22.0, 31.0),  # MF
                 freq_step=0.05,
                 smooth_window=5,
                 min_amp_threshold=0.0001,

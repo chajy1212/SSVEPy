@@ -11,8 +11,8 @@ SSVEPy/
 │   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
 │   │   ├── simple_attention.py                             # 단일 attention baseline
-│   │   ├── stimulus.py                                     # StimulusEncoder — sin/cos reference 신호 latent feature 인코딩
-│   │   └── stimulus_auto_estimator.py                      # 자극 주파수 자동 보정
+│   │   ├── stimulus.py                                     # StimulusEncoder
+│   │   └── stimulus_auto_estimator.py                      # 자극 주파수 자동 추정
 │   │
 │   ├── module/
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
