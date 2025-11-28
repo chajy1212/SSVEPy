@@ -9,10 +9,10 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import TorchBETADataset
+from data_loader import ExpBETADataset
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
-from stimulus_auto_corrector import StimulusAutoEstimator
+from stimulus_auto_corrector import StimulusAutoCorrector
 
 
 # ===== Reproducibility =====
@@ -81,35 +81,45 @@ def parse_subjects(subjects_arg, dataset_name=""):
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                     dataloader, optimizer, ce_criterion, device,
-                    accumulation_steps=1, auto_estimator=None, sfreq=None):
+                    correction_net, accumulation_steps=1):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
     dual_attn.train()
+    correction_net.train()
 
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for batch_idx, (eeg, label, freq, _) in enumerate(dataloader):
-        eeg, label = eeg.to(device), label.to(device)
+    for batch_idx, (eeg, label, nominal_freq, _) in enumerate(dataloader):
+        eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
         optimizer.zero_grad()
 
-        # EEG feature extraction
-        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        # (1) EEG latent feature
+        eeg_feat_seq = eeg_branch(eeg, return_sequence=True)  # (B, T', D)
+        eeg_feat_global = eeg_branch(eeg, return_sequence=False)  # (B, D)
 
-        # Stimulus → 무조건 자동 보정 (dataset agnostic)
-        adj_freq = auto_estimator.estimate(eeg, sfreq)
-        stim_feat = stim_branch(adj_freq)
+        # (2) Δf correction
+        corrected_freq, delta_f = correction_net(eeg, nominal_freq)
 
-        # Template feature (label-independent)
+        # (3) Stimulus feature based on corrected frequency
+        stim_feat = stim_branch(corrected_freq)
+
+        # (4) Template feature
         temp_feat = temp_branch(eeg)
 
-        # Dual Attention forward
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        # (5) Dual Attention classification
+        logits, _, _, _ = dual_attn(eeg_feat_seq, stim_feat, temp_feat)
 
-        # CE loss
-        loss = ce_criterion(logits, label) + dual_attn.loss_entropy
+        # ===== Loss Functions =====
+        ce_loss = ce_criterion(logits, label)
+        entropy_loss = dual_attn.loss_entropy
+        ssl_loss = correction_net.compute_ssl_loss(eeg_feat_global, stim_feat)
+
+        # final loss
+        loss = ce_loss + entropy_loss + args.ssl_lambda * ssl_loss
+
         loss.backward()
 
         batch_size = label.size(0)
@@ -135,31 +145,27 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device, n_classes, trial_time,
-             auto_estimator=None, sfreq=None):
+             dataloader, ce_criterion, device, n_classes, trial_time, correction_net):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
     dual_attn.eval()
+    correction_net.eval()
 
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label, freq, _ in dataloader:
-        eeg, label = eeg.to(device), label.to(device)
+    for eeg, label, nominal_freq, _ in dataloader:
+        eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
-        # EEG feature extraction
-        eeg_feat = eeg_branch(eeg, return_sequence=True)
+        eeg_feat_seq = eeg_branch(eeg, return_sequence=True)
+        eeg_feat_global = eeg_branch(eeg, return_sequence=False)
 
-        # Stimulus → 무조건 자동 보정 (dataset agnostic)
-        adj_freq = auto_estimator.estimate(eeg, sfreq)
-        stim_feat = stim_branch(adj_freq)
-
-        # Template feature (label-independent)
+        corrected_freq, delta_f = correction_net(eeg, nominal_freq)
+        stim_feat = stim_branch(corrected_freq)
         temp_feat = temp_branch(eeg)
 
-        # Dual Attention forward
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        logits, _, _, _ = dual_attn(eeg_feat_seq, stim_feat, temp_feat)
 
         loss = ce_criterion(logits, label) + dual_attn.loss_entropy
         total_loss += loss.item() * label.size(0)
@@ -202,10 +208,10 @@ def main(args):
         writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpBETA_S{test_subj}_EEGNet_{ch_tag}")
 
         # Dataset
-        train_set = TorchBETADataset(subjects=train_subjs,
+        train_set = ExpBETADataset(subjects=train_subjs,
                                      data_root=args.beta_data_root,
                                      pick_channels=args.pick_channels)
-        test_set = TorchBETADataset(subjects=[test_subj],
+        test_set = ExpBETADataset(subjects=[test_subj],
                                     data_root=args.beta_data_root,
                                     pick_channels=args.pick_channels)
 
@@ -240,22 +246,18 @@ def main(args):
                                   d_model=args.d_model,
                                   num_heads=4,
                                   proj_dim=n_classes).to(device)
+        correction_net = StimulusAutoCorrector(eeg_channels=n_channels,
+                                               hidden_dim=args.d_query
+                                               ).to(device)
 
-        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn, correction_net)
 
         params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-                 list(temp_branch.parameters()) + list(dual_attn.parameters())
+                 list(temp_branch.parameters()) + list(dual_attn.parameters()) + list(correction_net.parameters())
+
         optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-
-        auto_estimator = StimulusAutoEstimator(
-            search_range=(7.5, 16.3),
-            freq_step=0.05,
-            smooth_window=5,
-            min_amp_threshold=0.05,
-            debug=True
-        )
 
         # best record
         best_acc, best_itr, best_epoch = 0.0, 0.0, 0
@@ -265,13 +267,13 @@ def main(args):
             train_loss, train_acc = train_one_epoch(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 train_loader, optimizer, criterion, device,
-                auto_estimator=auto_estimator, sfreq=sfreq
+                correction_net, accumulation_steps=1
             )
             test_loss, test_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 test_loader, criterion, device,
                 n_classes=n_classes, trial_time=trial_time,
-                auto_estimator=auto_estimator, sfreq=sfreq
+                correction_net=correction_net
             )
 
             scheduler.step()
@@ -304,6 +306,7 @@ def main(args):
                     "stim_branch": stim_branch.state_dict(),
                     "temp_branch": temp_branch.state_dict(),
                     "dual_attn": dual_attn.state_dict(),
+                    "correction_net": correction_net.state_dict(),
                     "optimizer": optimizer.state_dict()
                 }, save_path)
 
@@ -330,6 +333,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--ssl_lambda", type=float, default=0.1)
     parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ", help=" 'all' ")
     args = parser.parse_args()
 
