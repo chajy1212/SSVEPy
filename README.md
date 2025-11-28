@@ -12,7 +12,7 @@ SSVEPy/
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
 │   │   ├── simple_attention.py                             # 단일 attention baseline
 │   │   ├── stimulus.py                                     # StimulusEncoder
-│   │   └── stimulus_auto_estimator.py                      # 자극 주파수 자동 추정
+│   │   └── stimulus_auto_corrector.py                      # 주파수 보정 (Self-supervised Learning)
 │   │
 │   ├── module/
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
@@ -26,13 +26,13 @@ SSVEPy/
 │   │   ├── loso_beta.py                                    # BETA dataset — LOSO
 │   │   ├── loso_lee.py                                     # Lee2019 dataset — LOSO
 │   │   ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
-│   │   ├── exp_ar.py                                       # AR dataset — Auto-Estimated session split
-│   │   ├── exp_lee.py                                      # Lee2019 dataset — Auto-Estimated session split
-│   │   ├── exp_nakanishi.py                                # Nakanishi2015 dataset — Auto-Estimated random split
-│   │   ├── exp_loso_ar.py                                  # AR dataset — Auto-Estimated LOSO
-│   │   ├── exp_loso_beta.py                                # BETA dataset — Auto-Estimated LOSO
-│   │   ├── exp_loso_lee.py                                 # Lee2019 dataset — Auto-Estimated LOSO
-│   │   └── exp_loso_nakanishi.py                           # Nakanishi2015 dataset — Auto-Estimated LOSO
+│   │   ├── exp_ar.py                                       # AR dataset — Auto-Corrected session split
+│   │   ├── exp_lee.py                                      # Lee2019 dataset — Auto-Corrected session split
+│   │   ├── exp_nakanishi.py                                # Nakanishi2015 dataset — Auto-Corrected random split
+│   │   ├── exp_loso_ar.py                                  # AR dataset — Auto-Corrected LOSO
+│   │   ├── exp_loso_beta.py                                # BETA dataset — Auto-Corrected LOSO
+│   │   ├── exp_loso_lee.py                                 # Lee2019 dataset — Auto-Corrected LOSO
+│   │   └── exp_loso_nakanishi.py                           # Nakanishi2015 dataset — Auto-Corrected LOSO
 │   │
 │   ├── ablation/
 │   │   ├── session_split/
