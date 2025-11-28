@@ -1,6 +1,33 @@
 # -*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
+import math
+
+
+def generate_stimulus_signal(freq, T, sfreq):
+    """
+    stim 생성이 nominal_freq가 아니라 corrected_freq 기반으로 동작하도록 만듦
+
+    Args:
+        freq (Tensor): (B,) corrected frequency (nominal + Δf)
+        T (int): signal length (time samples)
+        sfreq (float): sampling rate
+
+    Returns:
+        Tensor: (B, T, 2) → sin/cos reference
+    """
+    B = freq.size(0)
+    t = torch.linspace(0, T / sfreq, T, device=freq.device).unsqueeze(0)  # (1, T)
+
+    freq = freq.unsqueeze(1)  # (B, 1)
+
+    # sin/cos reference
+    stim_sin = torch.sin(2 * math.pi * freq * t)  # (B, T)
+    stim_cos = torch.cos(2 * math.pi * freq * t)
+
+    stim = torch.stack([stim_sin, stim_cos], dim=2)  # (B, T, 2)
+
+    return stim
 
 
 class StimulusEncoder(nn.Module):
@@ -41,5 +68,3 @@ class StimulusEncoder(nn.Module):
         feat = feat.squeeze(-1)         # (B, hidden_dim)
 
         return feat
-
-

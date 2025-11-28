@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from data_loader import Lee2019Dataset_LOSO
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
-from stimulus_auto_estimator import StimulusAutoEstimator
+from stimulus_auto_corrector import StimulusAutoEstimator
 
 
 # ===== Reproducibility =====

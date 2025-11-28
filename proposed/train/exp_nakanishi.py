@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, random_split
 from dual_attention import DualAttention
 from data_loader import Nakanishi2015Dataset
 from branches import EEGBranch, StimulusBranch, TemplateBranch
-from stimulus_auto_estimator import StimulusAutoEstimator
+from stimulus_auto_corrector import StimulusAutoEstimator
 
 
 # ===== Reproducibility =====

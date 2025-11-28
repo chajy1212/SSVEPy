@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from data_loader import ARDataset
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
-from stimulus_auto_estimator import StimulusAutoEstimator, ARExp1_AutoEstimator
+from stimulus_auto_corrector import StimulusAutoEstimator, ARExp1_AutoEstimator
 
 
 # ===== Reproducibility =====

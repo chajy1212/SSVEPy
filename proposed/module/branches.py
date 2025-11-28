@@ -50,7 +50,7 @@ class StimulusBranch(nn.Module):
     def forward(self, freqs):
         """
         Args:
-            freq: (B,) adjusted freq
+            freq: (B,) corrected freq
         Returns:
             feat: (B, D_stim)
         """
