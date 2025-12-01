@@ -1,5 +1,4 @@
 # -*- coding:utf-8 -*-
-import os
 import torch
 import random
 import argparse
@@ -26,7 +25,7 @@ def set_seed(seed=777):
 
 
 # ============================================================
-# 2) Scaled Dot-Product Attention (Recommended)
+# 2) Scaled Dot-Product Attention
 # ============================================================
 class SoftmaxAttention(nn.Module):
     """
@@ -228,7 +227,7 @@ def main(args):
     ablation = args.ablation  # wocorr, wostim, wotemp, eegnet_only
 
     # folder path
-    save_root = f"/home/brainlab/Workspace/jycha/SSVEP/ablation/LOSO/{ablation}"
+    save_root = f"/home/brainlab/Workspace/jycha/SSVEP/ablation/{ablation}"
 
     subjects = list(range(1, 55))
     all_accs, all_itrs = [], []
@@ -305,7 +304,6 @@ def main(args):
             if te_acc > best_acc:
                 best_acc, best_itr = te_acc, itr
                 save_dir = f"{save_root}/model_path"
-                os.makedirs(save_dir, exist_ok=True)
                 torch.save(model, f"{save_dir}/sub{test_subj}.pth")
 
         all_accs.append(best_acc)
@@ -323,7 +321,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--ablation", type=str,
-                        default="wocorr",
+                        default="eegnet_only",
                         choices=["wocorr", "wostim", "wotemp", "eegnet_only"])
 
     parser.add_argument("--batch_size", type=int, default=64)
@@ -331,9 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--pick_channels", type=str,
-                        default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz")
-
+    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz")
     args = parser.parse_args()
 
     # format channels
