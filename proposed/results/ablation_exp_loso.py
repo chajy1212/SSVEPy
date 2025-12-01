@@ -14,7 +14,7 @@ from stimulus_auto_corrector import StimulusAutoCorrector
 
 
 # ============================================================
-# 1) Reproducibility
+# 1. Reproducibility
 # ============================================================
 def set_seed(seed=777):
     np.random.seed(seed)
@@ -25,7 +25,7 @@ def set_seed(seed=777):
 
 
 # ============================================================
-# 2) Scaled Dot-Product Attention
+# 2. Scaled Dot-Product Attention
 # ============================================================
 class SoftmaxAttention(nn.Module):
     """
@@ -42,20 +42,25 @@ class SoftmaxAttention(nn.Module):
         self.proj = nn.Linear(d_model, n_classes)
 
     def forward(self, eeg_feat, query_feat):
-        K = self.key(eeg_feat)        # (B, T, D)
-        V = self.value(eeg_feat)      # (B, T, D)
-        Q = self.query(query_feat).unsqueeze(1)  # (B, 1, D)
+        K = self.key(eeg_feat)                  # (B, T, D)
+        V = self.value(eeg_feat)                # (B, T, D)
+        Q = self.query(query_feat).unsqueeze(1) # (B, 1, D)
 
         att = torch.softmax((Q @ K.transpose(1, 2)) / self.scale, dim=-1)
-        out = att @ V  # (B, 1, D)
+        out = att @ V                     # (B, 1, D)
         out = out.squeeze(1)
 
         logits = self.proj(out)
         return logits, out
 
 
-# EEG-only (no query needed)
+# ============================================================
+# 3. EEG-only Classifier
+# ============================================================
 class EEGOnlyClassifier(nn.Module):
+    """
+    Query 없이 EEG만 Attention
+    """
     def __init__(self, d_eeg, d_model, n_classes):
         super().__init__()
         self.key = nn.Linear(d_eeg, d_model)
@@ -66,8 +71,8 @@ class EEGOnlyClassifier(nn.Module):
 
     def forward(self, eeg_feat):
         B = eeg_feat.size(0)
-        K = self.key(eeg_feat)
-        V = self.value(eeg_feat)
+        K = self.key(eeg_feat)          # (B, T, D)
+        V = self.value(eeg_feat)        # (B, T, D)
         Q = self.query.unsqueeze(0).repeat(B, 1).unsqueeze(1)  # (B,1,D)
 
         att = torch.softmax((Q @ K.transpose(1, 2)) / self.scale, dim=-1)
@@ -79,7 +84,7 @@ class EEGOnlyClassifier(nn.Module):
 
 
 # ============================================================
-# 3) ITR
+# 4. ITR function
 # ============================================================
 def compute_itr(acc, n_classes, trial_time, eps=1e-12):
     if acc <= 0 or n_classes <= 1:
@@ -96,10 +101,15 @@ def compute_itr(acc, n_classes, trial_time, eps=1e-12):
 
 
 # ============================================================
-# 4) Train / Eval
+# 5. Train / Eval
 # ============================================================
 def train_one_epoch(model, dataloader, optimizer, criterion, device, mode):
-    model.train()
+    model["eeg"].train()
+    if "stim" in model: model["stim"].train()
+    if "temp" in model: model["temp"].train()
+    if "corr" in model: model["corr"].train()
+    model["cls"].train()
+
     all_preds, all_labels = [], []
     total_loss = 0
 
@@ -107,38 +117,38 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device, mode):
         eeg, label, nominal = eeg.to(device), label.to(device), nominal.to(device)
 
         optimizer.zero_grad()
+
         feat_seq = model["eeg"](eeg, return_sequence=True)
         feat_global = model["eeg"](eeg, return_sequence=False)
 
-        # ----- mode-dependent logic -----
+        # --- Correction ---
         if mode != "wocorr":
-            corrected_freq, _ = model["corr"](eeg, nominal)
+            corrected, _ = model["corr"](eeg, nominal)
         else:
-            corrected_freq = nominal  # no correction
+            corrected = nominal
 
+        # --- Stimulus ---
         stim_feat = None
-        temp_feat = None
-
         if mode != "wostim":
-            stim_feat = model["stim"](corrected_freq)
+            stim_feat = model["stim"](corrected)
 
+        # --- Template ---
+        temp_feat = None
         if mode != "wotemp":
             temp_feat = model["temp"](eeg)
 
-        # Classifier
+        # ===== Classifier =====
         if mode == "eegnet_only":
             logits, _ = model["cls"](feat_seq)
+
         else:
-            # Query selection
-            if stim_feat is None and temp_feat is not None:
-                query = temp_feat
-            elif stim_feat is not None and temp_feat is None:
-                query = stim_feat
-            elif stim_feat is None and temp_feat is None:
-                # fallback (should not happen)
+            if stim_feat is None and temp_feat is None:
                 query = feat_global
+            elif stim_feat is None:
+                query = temp_feat
+            elif temp_feat is None:
+                query = stim_feat
             else:
-                # concat both for ablation safety (stim + temp)
                 query = torch.cat([stim_feat, temp_feat], dim=-1)
 
             logits, _ = model["cls"](feat_seq, query)
@@ -165,7 +175,8 @@ def evaluate(model, dataloader, criterion, device, n_classes, trial_time, mode):
     if "corr" in model: model["corr"].eval()
     model["cls"].eval()
 
-    all_preds, all_labels, total_loss = [], [], 0
+    all_preds, all_labels = [], []
+    total_loss = 0
 
     for eeg, label, nominal, subj in dataloader:
         eeg, label, nominal = eeg.to(device), label.to(device), nominal.to(device)
@@ -173,17 +184,17 @@ def evaluate(model, dataloader, criterion, device, n_classes, trial_time, mode):
         feat_seq = model["eeg"](eeg, return_sequence=True)
         feat_global = model["eeg"](eeg, return_sequence=False)
 
+        # correction
         if mode != "wocorr":
-            corrected_freq, _ = model["corr"](eeg, nominal)
+            corrected, _ = model["corr"](eeg, nominal)
         else:
-            corrected_freq = nominal
+            corrected = nominal
 
         stim_feat = None
-        temp_feat = None
-
         if mode != "wostim":
-            stim_feat = model["stim"](corrected_freq)
+            stim_feat = model["stim"](corrected)
 
+        temp_feat = None
         if mode != "wotemp":
             temp_feat = model["temp"](eeg)
 
@@ -191,12 +202,12 @@ def evaluate(model, dataloader, criterion, device, n_classes, trial_time, mode):
         if mode == "eegnet_only":
             logits, _ = model["cls"](feat_seq)
         else:
-            if stim_feat is None and temp_feat is not None:
-                query = temp_feat
-            elif stim_feat is not None and temp_feat is None:
-                query = stim_feat
-            elif stim_feat is None and temp_feat is None:
+            if stim_feat is None and temp_feat is None:
                 query = feat_global
+            elif stim_feat is None:
+                query = temp_feat
+            elif temp_feat is None:
+                query = stim_feat
             else:
                 query = torch.cat([stim_feat, temp_feat], dim=-1)
 
@@ -218,16 +229,13 @@ def evaluate(model, dataloader, criterion, device, n_classes, trial_time, mode):
 
 
 # ============================================================
-# 5) Main
+# 6. Main
 # ============================================================
 def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    ablation = args.ablation  # wocorr, wostim, wotemp, eegnet_only
-
-    # folder path
-    save_root = f"/home/brainlab/Workspace/jycha/SSVEP/ablation/{ablation}"
+    mode = args.ablation
+    save_root = f"/home/brainlab/Workspace/jycha/SSVEP/ablation/{mode}"
 
     subjects = list(range(1, 55))
     all_accs, all_itrs = [], []
@@ -249,31 +257,49 @@ def main(args):
         sfreq = train_ds.sfreq
         trial_time = T / sfreq
 
-        # ===== Model init =====
+        print(f"[INFO] Dataset: Lee2019")
+        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
+        print(f"[INFO] Train subjects: {np.unique(train_ds.subjects)}")
+        print(f"[INFO] Test subjects: {np.unique(test_ds.subjects)}")
+        print(f"[INFO] Train/Test samples: {len(train_ds)}/{len(test_ds)}")
+        print(f"[INFO] Channels used ({C}): {', '.join(args.pick_channels)}")
+        print(f"[INFO] Input shape: (C={C}, T={T}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+
+        # -------------------------
+        # Model
+        # -------------------------
         model = {}
-        model["eeg"] = EEGBranch(C, T).to(device)
+        model["eeg"] = EEGBranch(chans=C, samples=T).to(device)
 
-        if ablation != "wostim":
-            model["stim"] = StimulusBranch(T, sfreq, args.d_query, n_harmonics=3).to(device)
+        if mode != "wostim":
+            model["stim"] = StimulusBranch(
+                T=T, sfreq=sfreq, hidden_dim=args.d_query, n_harmonics=3
+            ).to(device)
 
-        if ablation != "wotemp":
-            model["temp"] = TemplateBranch(n_bands=8, n_features=32,
-                                           n_channels=C, n_samples=T,
-                                           n_classes=n_classes,
-                                           D_temp=args.d_query).to(device)
+        if mode != "wotemp":
+            model["temp"] = TemplateBranch(
+                n_bands=8, n_features=32, n_channels=C, n_samples=T,
+                n_classes=n_classes, D_temp=args.d_query
+            ).to(device)
 
-        if ablation != "wocorr":
-            model["corr"] = StimulusAutoCorrector(eeg_channels=C,
-                                                  hidden_dim=args.d_query).to(device)
+        if mode != "wocorr":
+            model["corr"] = StimulusAutoCorrector(
+                eeg_channels=C, hidden_dim=args.d_query
+            ).to(device)
 
-        if ablation == "eegnet_only":
+        # classifier
+        if mode == "eegnet_only":
             model["cls"] = EEGOnlyClassifier(
                 d_eeg=model["eeg"].feature_dim,
                 d_model=args.d_model,
                 n_classes=n_classes
             ).to(device)
         else:
-            query_dim = args.d_query * (2 if ablation == "none" else 1)
+            # Query dimension: stim only / temp only / stim+temp
+            query_dim = args.d_query
+            if mode == "none":
+                query_dim = args.d_query * 2
+
             model["cls"] = SoftmaxAttention(
                 d_eeg=model["eeg"].feature_dim,
                 d_query=query_dim,
@@ -281,41 +307,47 @@ def main(args):
                 n_classes=n_classes
             ).to(device)
 
+        # optimizer
         params = []
-        for k in model: params += list(model[k].parameters())
+        for k in model:
+            params += list(model[k].parameters())
 
         optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-        # ===== Training =====
+        # -------------------------
+        # Training Loop
+        # -------------------------
         best_acc, best_itr = 0, 0
 
         for epoch in range(1, args.epochs + 1):
-            tr_loss, tr_acc = train_one_epoch(model, train_loader, optimizer,
-                                              criterion, device, ablation)
-            te_loss, te_acc, itr = evaluate(model, test_loader, criterion,
-                                            device, n_classes, trial_time, ablation)
+            tr_loss, tr_acc = train_one_epoch(model, train_loader,
+                                              optimizer, criterion, device, mode)
+            te_loss, te_acc, itr = evaluate(model, test_loader,
+                                            criterion, device, n_classes, trial_time, mode)
+
             scheduler.step()
 
             writer.add_scalar("Train/Acc", tr_acc, epoch)
             writer.add_scalar("Test/Acc", te_acc, epoch)
 
             if te_acc > best_acc:
-                best_acc, best_itr = te_acc, itr
-                save_dir = f"{save_root}/model_path"
-                torch.save(model, f"{save_dir}/sub{test_subj}.pth")
+                best_acc = te_acc
+                best_itr = itr
+                save_path = f"{save_root}/model_path/sub{test_subj}.pth"
+                torch.save({k: model[k].state_dict() for k in model}, save_path)
 
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
     print("\n===== FINAL LOSO =====")
-    print(f"Acc:  {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
-    print(f"ITR:  {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
+    print(f"Acc: {np.mean(all_accs):.4f} ± {np.std(all_accs):.4f}")
+    print(f"ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 # ============================================================
-# 6) Main Args
+# 7. Arguments
 # ============================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
