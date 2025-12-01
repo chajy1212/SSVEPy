@@ -10,7 +10,6 @@ SSVEPy/
 │   │   ├── DTN.py                                          # Dynamic Template Network
 │   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
-│   │   ├── simple_attention.py                             # 단일 attention baseline
 │   │   ├── stimulus.py                                     # StimulusEncoder
 │   │   └── stimulus_auto_corrector.py                      # 주파수 보정 (Self-supervised Learning)
 │   │
@@ -34,22 +33,8 @@ SSVEPy/
 │   │   ├── exp_loso_lee.py                                 # Lee2019 dataset — Auto-Corrected LOSO
 │   │   └── exp_loso_nakanishi.py                           # Nakanishi2015 dataset — Auto-Corrected LOSO
 │   │
-│   ├── ablation/
-│   │   ├── session_split/
-│   │   │   ├── ablation_eegnet_dtn.py                      # EEGNet + DTN
-│   │   │   ├── ablation_eegnet_dtn_stim_concat.py          # EEGNet + DTN + Stimulus (Concat Two Attentions)
-│   │   │   ├── ablation_eegnet_dtn_stim_dual.py            # EEGNet + Stimulus + DTN + Dual Attention
-│   │   │   ├── ablation_eegnet_dtn_stim_element.py         # EEGNet + DTN + Stimulus (Element-wise Two Attentions)
-│   │   │   ├── ablation_eegnet_stim.py                     # EEGNet + Stimulus 구조 실험
-│   │   │   └── ablation_only_eegnet.py                     # EEGNet 단독 baseline
-│   │   │
-│   │   └── LOSO/
-│   │       ├── loso_ablation_eegnet_dtn.py                 # EEGNet + DTN
-│   │       ├── loso_ablation_eegnet_dtn_stim_concat.py     # EEGNet + DTN + Stimulus (Concat Two Attentions)
-│   │       ├── loso_ablation_eegnet_dtn_stim_dual.py       # EEGNet + Stimulus + DTN + Dual Attention
-│   │       ├── loso_ablation_eegnet_dtn_stim_element.py    # EEGNet + DTN + Stimulus (Element-wise Two Attentions)
-│   │       ├── loso_ablation_eegnet_only.py                # EEGNet 단독 baseline
-│   │       └── loso_ablation_eegnet_stim.py                # EEGNet + Stimulus 구조 실험
+│   ├── results/
+│   │   └── ablation_exp_loso.py                            # Ablation Study - Lee2019 dataset Auto-Corrected LOSO
 │   │
 │   └── preprocess/
 │       ├── preprocess_AR.py                                # AR dataset raw EEG → .npz 변환 (전체 채널)
