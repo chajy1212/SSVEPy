@@ -24,6 +24,22 @@ def set_seed(seed=777):
     torch.backends.cudnn.benchmark = False
 
 
+def print_total_model_size(model_dict):
+    total_params = 0
+    trainable_params = 0
+
+    for key, module in model_dict.items():
+        for p in module.parameters():
+            total_params += p.numel()
+            if p.requires_grad:
+                trainable_params += p.numel()
+
+    print("\n[Model Size Summary]")
+    print(f"  Total Parameters     : {total_params:,}")
+    print(f"  Trainable Parameters : {trainable_params:,}")
+    print(f"  Memory Estimate      : {total_params * 4 / (1024 ** 2):.2f} MB\n")
+
+
 # ============================================================
 # 2. Scaled Dot-Product Attention
 # ============================================================
@@ -58,25 +74,32 @@ class SoftmaxAttention(nn.Module):
 # 3. EEG-only Classifier
 # ============================================================
 class EEGOnlyClassifier(nn.Module):
-    """
-    Query 없이 EEG만 Attention
-    """
     def __init__(self, d_eeg, d_model, n_classes):
         super().__init__()
         self.key = nn.Linear(d_eeg, d_model)
         self.value = nn.Linear(d_eeg, d_model)
-        self.query = nn.Parameter(torch.randn(1, d_model))
+
+        # learnable query vector (D)
+        self.query = nn.Parameter(torch.randn(d_model))
+
         self.scale = np.sqrt(d_model)
         self.proj = nn.Linear(d_model, n_classes)
 
     def forward(self, eeg_feat):
+        """
+        eeg_feat: (B, T, D_eeg)
+        """
         B = eeg_feat.size(0)
-        K = self.key(eeg_feat)          # (B, T, D)
-        V = self.value(eeg_feat)        # (B, T, D)
-        Q = self.query.unsqueeze(0).repeat(B, 1).unsqueeze(1)  # (B,1,D)
+
+        K = self.key(eeg_feat)   # (B, T, D)
+        V = self.value(eeg_feat) # (B, T, D)
+
+        # ALWAYS produce shape (B, 1, D)
+        Q = self.query.unsqueeze(0).unsqueeze(1).repeat(B, 1, 1)
+        # Q: (B, 1, D)
 
         att = torch.softmax((Q @ K.transpose(1, 2)) / self.scale, dim=-1)
-        out = att @ V
+        out = att @ V   # (B, 1, D)
         out = out.squeeze(1)
 
         logits = self.proj(out)
@@ -307,6 +330,8 @@ def main(args):
                 n_classes=n_classes
             ).to(device)
 
+        print_total_model_size(model)
+
         # optimizer
         params = []
         for k in model:
@@ -329,14 +354,30 @@ def main(args):
 
             scheduler.step()
 
-            writer.add_scalar("Train/Acc", tr_acc, epoch)
-            writer.add_scalar("Test/Acc", te_acc, epoch)
+            print(f"\n[Epoch {epoch:03d}] "
+                  f"Train Loss: {tr_loss:.5f} | Train Acc: {tr_acc:.5f} || "
+                  f"Test Loss: {te_loss:.5f} | Test Acc: {te_acc:.5f} | "
+                  f"ITR: {itr:.4f} bits/min")
+
+            # TensorBoard logging
+            writer.add_scalar("Loss/Train", tr_loss, epoch)
+            writer.add_scalar("Loss/Test", te_loss, epoch)
+            writer.add_scalar("Accuracy/Train", tr_acc, epoch)
+            writer.add_scalar("Accuracy/Test", te_acc, epoch)
+            writer.add_scalar("ITR/Test", itr, epoch)
 
             if te_acc > best_acc:
                 best_acc = te_acc
                 best_itr = itr
                 save_path = f"{save_root}/model_path/sub{test_subj}.pth"
-                torch.save({k: model[k].state_dict() for k in model}, save_path)
+                torch.save({
+                    "model": {k: model[k].state_dict() for k in model},
+                    "best_acc": best_acc,
+                    "best_itr": best_itr,
+                    "epoch": epoch,
+                    "subject": test_subj,
+                    "mode": mode
+                }, save_path)
 
         all_accs.append(best_acc)
         all_itrs.append(best_itr)

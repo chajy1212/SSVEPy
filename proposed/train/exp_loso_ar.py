@@ -9,9 +9,9 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, ConcatDataset
 
-from data_loader import ARDataset
+from data_loader import ExpARDataset
 from dual_attention import DualAttention
-from branches import EEGBranch, StimulusBranchWithPhase, TemplateBranch
+from branches import EEGBranch, StimulusBranch, TemplateBranch
 from stimulus_auto_corrector import StimulusAutoCorrector
 
 
@@ -90,8 +90,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label, nominal_freq, phase, task in dataloader:
-        eeg, label, nominal_freq, phase = eeg.to(device), label.to(device), nominal_freq.to(device), phase.to(device)
+    for eeg, label, nominal_freq, task in dataloader:
+        eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
         optimizer.zero_grad()
 
@@ -103,7 +103,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         corrected_freq, delta_f = correction_net(eeg, nominal_freq)
 
         # (3) Stimulus feature based on corrected frequency
-        stim_feat = stim_branch(corrected_freq, phase)
+        stim_feat = stim_branch(corrected_freq)
 
         # (4) Template feature
         temp_feat = temp_branch(eeg)
@@ -151,14 +151,14 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     total_loss = 0.0
     task_correct, task_total = {}, {}
 
-    for eeg, label, nominal_freq, phase, task in dataloader:
-        eeg, label, nominal_freq, phase = eeg.to(device), label.to(device), nominal_freq.to(device), phase.to(device)
+    for eeg, label, nominal_freq, task in dataloader:
+        eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
         eeg_feat_seq = eeg_branch(eeg, return_sequence=True)
         eeg_feat_global = eeg_branch(eeg, return_sequence=False)
 
         corrected_freq, delta_f = correction_net(eeg, nominal_freq)
-        stim_feat = stim_branch(corrected_freq, phase)
+        stim_feat = stim_branch(corrected_freq)
         temp_feat = temp_branch(eeg)
 
         logits, _, _, _ = dual_attn(eeg_feat_seq, stim_feat, temp_feat)
@@ -229,10 +229,10 @@ def main(args):
             # Build datasets
             train_datasets = []
             for s in train_subj_list:
-                train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="train"))
+                train_datasets.append(ExpARDataset(args.ar_data_root, s, exp_name, session="train"))
 
             train_dataset = ConcatDataset(train_datasets)
-            test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="test")
+            test_dataset = ExpARDataset(args.ar_data_root, test_subj, exp_name, session="test")
 
             n_channels = test_dataset.C
             n_samples = test_dataset.T
@@ -252,11 +252,10 @@ def main(args):
 
             # Model
             eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-            stim_branch = StimulusBranchWithPhase(T=n_samples,
-                                                  sfreq=sfreq,
-                                                  hidden_dim=args.d_query,
-                                                  n_harmonics=3,
-                                                  out_dim=args.d_query).to(device)
+            stim_branch = StimulusBranch(T=n_samples,
+                                         sfreq=sfreq,
+                                         hidden_dim=args.d_query,
+                                         n_harmonics=3).to(device)
             temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                          n_channels=n_channels,
                                          n_samples=n_samples,
