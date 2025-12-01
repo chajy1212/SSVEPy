@@ -6,16 +6,15 @@ Steady State Visually Evoked Potential (SSVEP) Library
 SSVEPy/
 │
 ├── proposed/
-│   ├── core/
+│   │
+│   ├── module/
 │   │   ├── DTN.py                                          # Dynamic Template Network
 │   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
+│   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
+│   │   ├── data_loader.py                                  # EEG 데이터셋 로더
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
 │   │   ├── stimulus.py                                     # StimulusEncoder
 │   │   └── stimulus_auto_corrector.py                      # 주파수 보정 (Self-supervised Learning)
-│   │
-│   ├── module/
-│   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
-│   │   └── data_loader.py                                  # EEG 데이터셋 로더
 │   │
 │   ├── train/
 │   │   ├── train_ar.py                                     # AR dataset — session split
