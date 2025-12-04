@@ -518,7 +518,7 @@ class ExpLee2019Dataset_LOSO(Dataset):
 
         # Preprocessing
         raw.resample(250.0, npad="auto")
-        raw.filter(l_freq=1, h_freq=40, fir_design="firwin", verbose=False)
+        raw.filter(l_freq=8, h_freq=30, fir_design="firwin", verbose=False)
         raw.set_eeg_reference('average', projection=False)
 
         self.epochs = raw.get_data().astype(np.float32)
@@ -616,18 +616,15 @@ class TorchBETADataset(Dataset):
 
 
 class ExpBETADataset(Dataset):
-    def __init__(self, subjects, data_root, pick_channels="all"):
+    def __init__(self, subjects, data_root, pick_channels="all", blocks=None):
         """
-        subjects: list of subject numbers (e.g. [16,17,...])
-        data_root: path to folder containing the .mat files / BETA data
-        pick_channels: “all” or list of channel names
+        subjects : [16]                   → 한 명 또는 여러 명
+        blocks   : [0,1,2] 또는 [3] 형태   → 어떤 block을 포함할지 선택
         """
-        # Initialize toolbox dataset
-        # The BETADataset constructor takes `path` (root) and optional support path etc.
         self.bs = BETADataset(path=data_root)
-
         self.subjects = subjects
         self.pick_channels = pick_channels
+        self.blocks_filter = blocks
 
         # Build index map of (sub_idx, block, trial)
         self.index_map = []
@@ -635,41 +632,38 @@ class ExpBETADataset(Dataset):
             sub_idx = s - 1  # toolbox uses 0-based indexing internally
             data = self.bs.get_sub_data(sub_idx)  # shape (block, stimulus, ch, samples)
             B, K, C, T = data.shape
-            for b in range(B):
-                for k in range(K):
+
+            for b in range(B):          # 0~3 block
+                for k in range(K):      # 40 classes
                     self.index_map.append((sub_idx, b, k))
 
-        # Preload epochs, labels, freqs, phases, blocks
-        epochs = []
-        labels = []
-        freqs = []
-        blocks = []
-
+        # Preload data
+        epochs, labels, freqs, blocks_list = [], [], [], []
         stim_freqs = self.bs.stim_info["freqs"]
-        block_num = self.bs.block_num
 
         for (sub_idx, b, k) in self.index_map:
+            # block filtering
+            if self.blocks_filter is not None:
+                if b not in self.blocks_filter:
+                    continue
+
             data = self.bs.get_sub_data(sub_idx)
-            sig = data[b, k, :, :]  # shape (C, T)
+            sig = data[b, k, :, :]
 
             epochs.append(sig.astype(float))
             labels.append(k)
             freqs.append(stim_freqs[k])
-            blocks.append(b + sub_idx * block_num)
+            blocks_list.append(b)
 
-        self.epochs = np.stack(epochs, axis=0)    # (N, C, T)
-        self.labels = np.array(labels, dtype=int)
-        self.freqs = np.array(freqs, dtype=float)
-        self.blocks = np.array(blocks, dtype=int)
+        self.epochs = np.stack(epochs, axis=0)
+        self.labels = np.array(labels)
+        self.freqs = np.array(freqs)
+        self.blocks = np.array(blocks_list)
 
-        # apply pick_channels if not all
+        # apply pick_channels
         if pick_channels != "all":
             name_map = {ch: i for i, ch in enumerate(self.bs.channels)}
             picks = [name_map[ch] for ch in pick_channels if ch in name_map]
-
-            if len(picks) == 0:
-                raise ValueError(f"No valid channel in pick_channels {pick_channels}")
-
             self.epochs = self.epochs[:, picks, :]
 
         self.N, self.C, self.T = self.epochs.shape
@@ -679,10 +673,9 @@ class ExpBETADataset(Dataset):
 
     def __getitem__(self, idx):
         sig = self.epochs[idx]  # (C, T)
+        eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
         lbl = int(self.labels[idx])
         freq = float(self.freqs[idx])
         block = int(self.blocks[idx])
-
-        eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
 
         return eeg, lbl, freq, block

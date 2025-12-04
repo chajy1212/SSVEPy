@@ -394,7 +394,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--ablation", type=str,
-                        default="eegnet_only",
+                        default="wocorr",
                         choices=["wocorr", "wostim", "wotemp", "eegnet_only"])
 
     parser.add_argument("--batch_size", type=int, default=64)

@@ -6,7 +6,8 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+from sklearn.model_selection import KFold
 from torch.utils.tensorboard import SummaryWriter
 
 from data_loader import ExpLee2019Dataset_LOSO
@@ -181,7 +182,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     return avg_loss, acc, itr
 
 
-# ===== Main (LOSO) =====
+# ===== Main (KFold CV) =====
 def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -192,38 +193,33 @@ def main(args):
     else:
         ch_tag = "".join(args.pick_channels)
 
+    dataset = ExpLee2019Dataset_LOSO(
+        subjects=parse_subjects(args.subjects, "Lee2019"),
+        pick_channels=args.pick_channels
+    )
+
+    n_channels = dataset.C
+    n_samples = dataset.T
+    n_classes = dataset.n_classes
+    sfreq = dataset.sfreq
+    trial_time = n_samples / sfreq
+
+    print(f"[INFO] Dataset: Lee2019")
+    print(f"[INFO] Subjects used ({len(dataset.subjects)}): {dataset.subjects}")
+    print(f"[INFO] Total Samples: {len(dataset)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz")
+
+    kf = KFold(n_splits=args.kfold, shuffle=True, random_state=777)
+
     all_accs, all_itrs = [], []
 
-    subjects = parse_subjects(args.subjects, "Lee2019")
-    for test_subj in subjects:
-        print(f"\n--- LOSO Test Subject: {test_subj} ---")
-        train_subjs = [s for s in subjects if s != test_subj]
+    for fold, (train_idx, test_idx) in enumerate(kf.split(dataset)):
+        print(f"\n========== Fold {fold + 1} / {args.kfold} ==========")
+        print("Train:", len(train_idx), "Test:", len(test_idx))
 
-        # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpLOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
-
-        # Dataset split
-        train_dataset = ExpLee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_dataset = ExpLee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
-
-        n_channels = train_dataset.C
-        n_samples = train_dataset.T
-        n_classes = train_dataset.n_classes
-        sfreq = train_dataset.sfreq
-        trial_time = n_samples / sfreq
-
-        print(f"[INFO] Dataset: Lee2019")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train subjects: {np.unique(train_dataset.subjects)}")
-        print(f"[INFO] Test subjects: {np.unique(test_dataset.subjects)}")
-        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
-
-        print("Unique train labels:", np.unique(train_dataset.labels))
-        print("Unique test labels:", np.unique(test_dataset.labels))
-        print("Stimulus freqs train:", train_dataset.freqs)
-        print("Stimulus freqs test:\n", test_dataset.freqs)
+        train_dataset = Subset(dataset, train_idx)
+        test_dataset = Subset(dataset, test_idx)
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
@@ -256,6 +252,9 @@ def main(args):
         ce_criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
+        writer = SummaryWriter(
+            log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpLee2019_Fold{fold}_EEGNet_{ch_tag}")
+
         # best record
         best_acc, best_itr, best_epoch = 0.0, 0.0, 0
 
@@ -274,7 +273,7 @@ def main(args):
 
             scheduler.step()
 
-            print(f"\n[Epoch {epoch:03d}] "
+            print(f"\n[Fold {fold+1}][Epoch {epoch:03d}] "
                   f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
                   f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                   f"ITR: {itr:.4f} bits/min")
@@ -294,7 +293,7 @@ def main(args):
 
                 # Save Model
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                save_path = os.path.join(save_dir, f"ExpLOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_path = os.path.join(save_dir, f"ExpLee2019_Fold{fold}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,
@@ -308,7 +307,7 @@ def main(args):
                     "optimizer": optimizer.state_dict(),
                 }, save_path)
 
-                print(f"\n[Save] Epoch {best_epoch} → Best model "
+                print(f"\n[Save] Fold {fold} Epoch {best_epoch} → Best model "
                       f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
         writer.close()
@@ -316,8 +315,8 @@ def main(args):
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
-    # After loop → LOSO summary
-    print("\n[Final LOSO]")
+    # After loop → KFold summary
+    print("\n[Final FKold]")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
@@ -332,6 +331,7 @@ if __name__ == '__main__':
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--ssl_lambda", type=float, default=0.1)
     parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--kfold", type=int, default=5)
     args = parser.parse_args()
 
     # Parse channel selection

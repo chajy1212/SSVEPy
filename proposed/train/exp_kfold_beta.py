@@ -6,10 +6,11 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
+from sklearn.model_selection import KFold
 from torch.utils.tensorboard import SummaryWriter
 
-from data_loader import ExpLee2019Dataset_LOSO
+from data_loader import ExpBETADataset
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
 from stimulus_auto_corrector import StimulusAutoCorrector
@@ -59,8 +60,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
     subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
     """
     if subjects_arg.lower() == "all":
-        if dataset_name == "Lee2019":
-            subjects = list(range(1, 55))  # 1 ~ 54
+        if dataset_name == "BETA":
+            subjects = list(range(1, 71))  # 1 ~ 70
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -80,7 +81,8 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, ce_criterion, device, correction_net):
+                    dataloader, optimizer, ce_criterion, device,
+                    correction_net, accumulation_steps=1):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -90,7 +92,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label, nominal_freq, subj in dataloader:
+    for batch_idx, (eeg, label, nominal_freq, _) in enumerate(dataloader):
         eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
         optimizer.zero_grad()
@@ -120,14 +122,18 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         loss = ce_loss + entropy_loss + args.ssl_lambda * ssl_loss
 
         loss.backward()
-        optimizer.step()
 
         batch_size = label.size(0)
-        total_loss += loss.item() * batch_size
+        total_loss += loss.item() * batch_size * accumulation_steps
 
         _, pred = logits.max(1)
         all_preds.append(pred.detach().cpu())
         all_labels.append(label.detach().cpu())
+
+        # Update weights after accumulation_steps
+        if (batch_idx + 1) % accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
@@ -150,7 +156,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    for eeg, label, nominal_freq, subj in dataloader:
+    for eeg, label, nominal_freq, _ in dataloader:
         eeg, label, nominal_freq = eeg.to(device), label.to(device), nominal_freq.to(device)
 
         eeg_feat_seq = eeg_branch(eeg, return_sequence=True)
@@ -181,7 +187,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     return avg_loss, acc, itr
 
 
-# ===== Main (LOSO) =====
+# ===== Main (KFold CV) =====
 def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -192,41 +198,38 @@ def main(args):
     else:
         ch_tag = "".join(args.pick_channels)
 
+    dataset = ExpBETADataset(
+        subjects=parse_subjects(args.subjects, "BETA"),
+        data_root=args.beta_data_root,
+        pick_channels=args.pick_channels,
+        blocks=None  # block 무시하고 전체 사용
+    )
+
+    n_channels = dataset.C
+    n_samples = dataset.T
+    n_classes = len(np.unique(dataset.labels))
+    sfreq = dataset.bs.srate
+    trial_time = n_samples / sfreq
+
+    print(f"[INFO] Dataset: BETA")
+    print(f"[INFO] Subjects used ({len(dataset.subjects)}): {dataset.subjects}")
+    print(f"[INFO] Total Samples: {len(dataset)}")
+    print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+    print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz")
+
+    kf = KFold(n_splits=args.kfold, shuffle=True, random_state=777)
+
     all_accs, all_itrs = [], []
 
-    subjects = parse_subjects(args.subjects, "Lee2019")
-    for test_subj in subjects:
-        print(f"\n--- LOSO Test Subject: {test_subj} ---")
-        train_subjs = [s for s in subjects if s != test_subj]
+    for fold, (train_idx, test_idx) in enumerate(kf.split(dataset)):
+        print(f"\n========== Fold {fold + 1} / {args.kfold} ==========")
+        print("Train:", len(train_idx), "Test:", len(test_idx))
 
-        # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpLOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
+        train_set = Subset(dataset, train_idx)
+        test_set = Subset(dataset, test_idx)
 
-        # Dataset split
-        train_dataset = ExpLee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
-        test_dataset = ExpLee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
-
-        n_channels = train_dataset.C
-        n_samples = train_dataset.T
-        n_classes = train_dataset.n_classes
-        sfreq = train_dataset.sfreq
-        trial_time = n_samples / sfreq
-
-        print(f"[INFO] Dataset: Lee2019")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train subjects: {np.unique(train_dataset.subjects)}")
-        print(f"[INFO] Test subjects: {np.unique(test_dataset.subjects)}")
-        print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
-
-        print("Unique train labels:", np.unique(train_dataset.labels))
-        print("Unique test labels:", np.unique(test_dataset.labels))
-        print("Stimulus freqs train:", train_dataset.freqs)
-        print("Stimulus freqs test:\n", test_dataset.freqs)
-
-        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
         # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
@@ -245,7 +248,8 @@ def main(args):
                                   num_heads=4,
                                   proj_dim=n_classes).to(device)
         correction_net = StimulusAutoCorrector(eeg_channels=n_channels,
-                                               hidden_dim=args.d_query).to(device)
+                                               hidden_dim=args.d_query
+                                               ).to(device)
 
         print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn, correction_net)
 
@@ -253,8 +257,10 @@ def main(args):
                  list(temp_branch.parameters()) + list(dual_attn.parameters()) + list(correction_net.parameters())
 
         optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-        ce_criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/ExpBETA_Fold{fold}_EEGNet_{ch_tag}")
 
         # best record
         best_acc, best_itr, best_epoch = 0.0, 0.0, 0
@@ -263,18 +269,19 @@ def main(args):
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc = train_one_epoch(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
-                train_loader, optimizer, ce_criterion, device, correction_net
+                train_loader, optimizer, criterion, device,
+                correction_net, accumulation_steps=1
             )
             test_loss, test_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
-                test_loader, ce_criterion, device,
+                test_loader, criterion, device,
                 n_classes=n_classes, trial_time=trial_time,
                 correction_net=correction_net
             )
 
             scheduler.step()
 
-            print(f"\n[Epoch {epoch:03d}] "
+            print(f"\n[Fold {fold + 1}][Epoch {epoch:03d}] "
                   f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
                   f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                   f"ITR: {itr:.4f} bits/min")
@@ -288,13 +295,11 @@ def main(args):
 
             # update best record
             if test_acc > best_acc:
-                best_acc = test_acc
-                best_itr = itr
-                best_epoch = epoch
+                best_acc, best_itr, best_epoch = test_acc, (itr or 0.0), epoch
 
                 # Save Model
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                save_path = os.path.join(save_dir, f"ExpLOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_path = os.path.join(save_dir, f"ExpBETA_Fold{fold}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,
@@ -303,12 +308,12 @@ def main(args):
                     "eeg_branch": eeg_branch.state_dict(),
                     "stim_branch": stim_branch.state_dict(),
                     "temp_branch": temp_branch.state_dict(),
-                    "correction_net": correction_net.state_dict(),
                     "dual_attn": dual_attn.state_dict(),
-                    "optimizer": optimizer.state_dict(),
+                    "correction_net": correction_net.state_dict(),
+                    "optimizer": optimizer.state_dict()
                 }, save_path)
 
-                print(f"\n[Save] Epoch {best_epoch} → Best model "
+                print(f"\n[Save] Fold {fold} Epoch {best_epoch} → Best model "
                       f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
         writer.close()
@@ -316,22 +321,24 @@ def main(args):
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
-    # After loop → LOSO summary
-    print("\n[Final LOSO]")
+    # After loop → KFold summary
+    print("\n[Final FKold]")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
+    parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
+    parser.add_argument("--subjects", type=str, default="16-70", help="e.g. '16-50' or '16,17,18'")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--ssl_lambda", type=float, default=0.1)
-    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ", help=" 'all' ")
+    parser.add_argument("--kfold", type=int, default=5)
     args = parser.parse_args()
 
     # Parse channel selection
