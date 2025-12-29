@@ -97,8 +97,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         # Stimulus feature (no phase)
-        stim_feat = stim_branch(torch.zeros_like(label))
-        temp_feat = temp_branch(eeg)
+        stim_feat = stim_branch(label)
+        temp_feat = temp_branch(eeg, label)
 
         # Dual Attention forward
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
@@ -133,33 +133,47 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     dual_attn.eval()
 
     all_preds, all_labels = [], []
-    total_loss = 0.0
+
+    candidate_indices = torch.arange(n_classes).to(device)
 
     for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
+        B = eeg.size(0)
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        stim_feat = stim_branch(torch.zeros_like(label))
         temp_feat = temp_branch(eeg)
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        loss = ce_criterion(logits, label)
-        total_loss += loss.item() * label.size(0)
+        batch_scores = []
 
-        _, pred = logits.max(1)
-        all_preds.append(pred.cpu())
+        # 모든 후보 클래스에 대해 반복
+        for cls_idx in candidate_indices:
+            # 현재 배치를 cls_idx라고 가정
+            cls_batch = cls_idx.view(1).expand(B)
+
+            # Stimulus Feature: 가정된 클래스의 파형 생성
+            stim_feat = stim_branch(cls_batch)
+
+            # Dual Attention Forward
+            logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+
+            # 해당 클래스(cls_idx)에 대한 점수만 가져옴
+            score = logits[:, cls_idx]
+            batch_scores.append(score.unsqueeze(1))
+
+        # 가장 높은 점수 선택
+        batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
+        preds = batch_scores.argmax(dim=1)
+
+        all_preds.append(preds.cpu())
         all_labels.append(label.cpu())
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
-    avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
-
-    # ITR
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return avg_loss, acc, itr
+    return 0.0, acc, itr
 
 
 # ===== Main (LOSO) =====
@@ -212,8 +226,7 @@ def main(args):
 
         # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranch(freqs=freqs,
-                                     T=n_samples,
+        stim_branch = StimulusBranch(T=n_samples,
                                      sfreq=sfreq,
                                      hidden_dim=args.d_query,
                                      n_harmonics=3).to(device)

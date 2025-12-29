@@ -98,10 +98,8 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # Stimulus feature with perturbation
-        freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
-        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
-        stim_feat = stim_branch(freq_pert, phase_pert)
+        # Stimulus feature
+        stim_feat = stim_branch(freq, phase)
 
         # Template feature (label-independent)
         temp_feat = temp_branch(eeg)
@@ -143,43 +141,59 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     dual_attn.eval()
 
     all_preds, all_labels = [], []
-    total_loss = 0.0
 
-    for eeg, label, freq, phase, _ in dataloader:
+    # [수정 1] 데이터셋에서 후보 주파수/위상 가져오기
+    # TorchBETADataset에 freqs, phases 속성이 있다고 가정
+    if hasattr(dataloader.dataset, 'freqs') and hasattr(dataloader.dataset, 'phases'):
+        cand_freqs = dataloader.dataset.freqs
+        cand_phases = dataloader.dataset.phases
+    else:
+        # Fallback: 만약 속성이 없다면 직접 에러 처리하거나 계산 필요
+        raise AttributeError("Dataset does not have 'freqs' or 'phases' attribute.")
+
+    candidate_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
+    candidate_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
+    candidate_indices = torch.arange(n_classes).to(device)
+
+    for eeg, label, _, _, _ in dataloader:
         eeg, label = eeg.to(device), label.to(device)
-        freq, phase = freq.to(device), phase.to(device)
+        B = eeg.size(0)
 
-        # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-
-        # Stimulus feature with perturbation
-        freq_pert = freq + torch.randn_like(freq) * 1.0     # ±1 Hz noise
-        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
-        stim_feat = stim_branch(freq_pert, phase_pert)
-
-        # Template feature (label-independent)
         temp_feat = temp_branch(eeg)
 
-        # Dual Attention forward
-        logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        batch_scores = []
 
-        loss = ce_criterion(logits, label) + dual_attn.loss_entropy
-        total_loss += loss.item() * label.size(0)
+        # Pattern Matching Loop
+        for cls_idx, f_val, p_val in zip(candidate_indices, candidate_freqs, candidate_phases):
+            # 현재 배치를 cls_idx라고 가정
+            f_batch = f_val.view(1).expand(B)
+            p_batch = p_val.view(1).expand(B)
 
-        _, pred = logits.max(1)
-        all_preds.append(pred.cpu())
+            # Stimulus Feature 생성
+            stim_feat = stim_branch(f_batch, p_batch)
+
+            # Dual Attention Forward
+            logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+
+            # 해당 클래스의 점수 저장
+            score = logits[:, cls_idx]
+            batch_scores.append(score.unsqueeze(1))
+
+        # 가장 높은 점수 선택
+        batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
+        preds = batch_scores.argmax(dim=1)
+
+        all_preds.append(preds.cpu())
         all_labels.append(label.cpu())
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
-    avg_loss = total_loss / len(all_labels)
     acc = (all_preds == all_labels).float().mean().item()
-
-    # ITR
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return avg_loss, acc, itr
+    return 0.0, acc, itr
 
 
 # ===== Main =====
@@ -228,9 +242,11 @@ def main(args):
 
         # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranchWithPhase(T=n_samples, sfreq=sfreq,
+        stim_branch = StimulusBranchWithPhase(T=n_samples,
+                                              sfreq=sfreq,
                                               hidden_dim=args.d_query,
-                                              n_harmonics=3).to(device)
+                                              n_harmonics=3,
+                                              out_dim=args.d_query).to(device)
         temp_branch = TemplateBranch(n_bands=8, n_features=32,
                                      n_channels=n_channels,
                                      n_samples=n_samples,
