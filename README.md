@@ -13,29 +13,18 @@ SSVEPy/
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
 │   │   ├── data_loader.py                                  # EEG 데이터셋 로더
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
-│   │   ├── stimulus.py                                     # StimulusEncoder
-│   │   └── stimulus_auto_corrector.py                      # 주파수 보정 (Self-supervised Learning)
+│   │   └── stimulus.py                                     # StimulusEncoder
 │   │
 │   ├── train/
 │   │   ├── train_ar.py                                     # AR dataset — session split
 │   │   ├── train_lee.py                                    # Lee2019 dataset — session split
-│   │   ├── train_nakanishi.py                              # Nakanishi2015 dataset — random split
 │   │   ├── loso_ar.py                                      # AR dataset — LOSO
 │   │   ├── loso_beta.py                                    # BETA dataset — LOSO
 │   │   ├── loso_lee.py                                     # Lee2019 dataset — LOSO
-│   │   ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
-│   │   ├── exp_ar.py                                       # AR dataset — Auto-Corrected session split
-│   │   ├── exp_lee.py                                      # Lee2019 dataset — Auto-Corrected session split
-│   │   ├── exp_nakanishi.py                                # Nakanishi2015 dataset — Auto-Corrected random split
-│   │   ├── exp_loso_ar.py                                  # AR dataset — Auto-Corrected LOSO
-│   │   ├── exp_loso_beta.py                                # BETA dataset — Auto-Corrected LOSO
-│   │   ├── exp_loso_lee.py                                 # Lee2019 dataset — Auto-Corrected LOSO
-│   │   ├── exp_loso_nakanishi.py                           # Nakanishi2015 dataset — Auto-Corrected LOSO
-│   │   ├── exp_kfold_beta.py                               # BETA dataset — Auto-Corrected KFold
-│   │   └── exp_kfold_lee.py                                # Lee2019 dataset — Auto-Corrected KFold
+│   │   └── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
 │   │
 │   ├── results/
-│   │   └── ablation_exp_loso.py                            # Ablation Study - Lee2019 dataset Auto-Corrected LOSO
+│   │   └── ...                                             # ...
 │   │
 │   └── preprocess/
 │       ├── preprocess_AR.py                                # AR dataset raw EEG → .npz 변환 (전체 채널)
