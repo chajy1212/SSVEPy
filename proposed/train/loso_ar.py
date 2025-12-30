@@ -86,12 +86,9 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # EEG feature
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # [수정] LOSO 학습 시에는 노이즈(Perturbation)를 추가하는 것이 일반화에 좋습니다.
-        freq_pert = freq + torch.randn_like(freq) * 0.1  # ±0.1 Hz noise
-        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
-        stim_feat = stim_branch(freq_pert, phase_pert)
+        stim_feat = stim_branch(freq, phase)
 
-        # [수정] Template: 정답 라벨 입력 (업데이트 발생)
+        # Template: 정답 라벨 입력 (업데이트 발생)
         temp_feat = temp_branch(eeg, label)
 
         # Dual Attention
@@ -123,7 +120,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
              dataloader, ce_criterion, device, n_classes, trial_time,
              cand_freqs, cand_phases):
     """
-    [수정] Pattern Matching 방식으로 완전히 변경
+    Pattern Matching 방식으로 완전히 변경
     """
     eeg_branch.eval()
     stim_branch.eval()
@@ -133,15 +130,21 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     task_correct, task_total = {}, {}
 
+    total_loss = 0.0
+
     # 후보군 텐서 변환
     candidate_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
     candidate_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
     candidate_indices = torch.arange(n_classes).to(device)
 
+    # dataset size counting
+    total_samples = 0
+
     # 정답(freq, phase)은 사용하지 않음 (_)
     for eeg, label, _, _, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
+        total_samples += B
 
         # 1. EEG Feature
         eeg_feat = eeg_branch(eeg, return_sequence=True)
@@ -150,7 +153,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         # 2. Pattern Matching Loop
         for cls_idx, f_val, p_val in zip(candidate_indices, candidate_freqs, candidate_phases):
-            # (A) Stimulus: 후보 주파수/위상 (노이즈 없음)
+            # (A) Stimulus: 후보 주파수/위상
             f_batch = f_val.view(1).expand(B)
             p_batch = p_val.view(1).expand(B)
             stim_feat = stim_branch(f_batch, p_batch)
@@ -170,6 +173,10 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
         preds = batch_scores.argmax(dim=1)
 
+        # CrossEntropy Loss 계산
+        loss = ce_criterion(batch_scores, label)
+        total_loss += loss.item() * B
+
         all_preds.append(preds.cpu())
         all_labels.append(label.cpu())
 
@@ -182,13 +189,14 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
+    avg_loss = total_loss / total_samples
     acc = (all_preds == all_labels).float().mean().item()
 
     task_acc = {t: task_correct[t] / task_total[t] for t in task_total if task_total[t] > 0}
     task_itr = {t: compute_itr(a, n_classes, trial_time) for t, a in task_acc.items()}
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return 0.0, acc, task_acc, itr, task_itr
+    return avg_loss, acc, task_acc, itr, task_itr
 
 
 # ===== Main (LOSO) =====
@@ -303,7 +311,7 @@ def main(args):
                     eeg_branch, stim_branch, temp_branch, dual_attn,
                     test_loader, ce_criterion, device,
                     n_classes=n_classes, trial_time=trial_time,
-                    cand_freqs=cand_freqs, cand_phases=cand_phases  # [수정] 전달
+                    cand_freqs=cand_freqs, cand_phases=cand_phases
                 )
 
                 scheduler.step()
@@ -359,11 +367,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--ar_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/processed_npz_occi")
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--d_query", type=int, default=64)
-    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--d_query", type=int, default=16)
+    parser.add_argument("--d_model", type=int, default=32)
     parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 

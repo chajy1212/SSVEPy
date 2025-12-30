@@ -70,7 +70,7 @@ def parse_subjects(subjects_arg, dataset_name=""):
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                     dataloader, optimizer, ce_criterion, device, dataset_freqs):
     """
-    [수정됨] dataset_freqs를 인자로 받아서 label -> frequency 변환 수행
+    dataset_freqs를 인자로 받아서 label -> frequency 변환 수행
     """
     eeg_branch.train()
     stim_branch.train()
@@ -94,7 +94,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # [수정] Label(인덱스)을 실제 주파수(Hz)로 변환
+        # Label(인덱스)을 실제 주파수(Hz)로 변환
         current_freqs = freqs_tensor[label]  # (B,)
 
         # Stimulus feature (Hz 값 입력)
@@ -137,7 +137,12 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     all_preds, all_labels = [], []
 
+    total_loss = 0.0
+
     candidate_indices = torch.arange(n_classes).to(device)
+
+    # dataset size counting
+    total_samples = 0
 
     # dataset_freqs가 numpy array나 list라면 tensor로 변환
     if not isinstance(dataset_freqs, torch.Tensor):
@@ -148,6 +153,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
+        total_samples += B
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
@@ -174,16 +180,21 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
         preds = batch_scores.argmax(dim=1)
 
+        # CrossEntropy Loss 계산
+        loss = ce_criterion(batch_scores, label)
+        total_loss += loss.item() * B
+
         all_preds.append(preds.cpu())
         all_labels.append(label.cpu())
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
+    avg_loss = total_loss / total_samples
     acc = (all_preds == all_labels).float().mean().item()
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return 0.0, acc, itr
+    return avg_loss, acc, itr
 
 
 # ===== Main (LOSO) =====
@@ -257,7 +268,7 @@ def main(args):
             train_loss, train_acc = train_one_epoch(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 train_loader, optimizer, ce_criterion, device,
-                dataset_freqs=freqs  # [수정] 학습 함수에도 주파수 리스트 전달
+                dataset_freqs=freqs  # 학습 함수에도 주파수 리스트 전달
             )
             test_loss, test_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
@@ -316,11 +327,11 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--d_query", type=int, default=64)
-    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--d_query", type=int, default=16)
+    parser.add_argument("--d_model", type=int, default=32)
     parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 

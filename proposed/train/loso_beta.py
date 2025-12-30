@@ -101,7 +101,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # Stimulus feature
         stim_feat = stim_branch(freq, phase)
 
-        # Template feature (label-independent)
+        # Template feature
         temp_feat = temp_branch(eeg, label)
 
         # Dual Attention forward
@@ -143,13 +143,19 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     all_preds, all_labels = [], []
 
+    total_loss = 0.0
+
     candidate_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
     candidate_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
     candidate_indices = torch.arange(n_classes).to(device)
 
+    # dataset size counting
+    total_samples = 0
+
     for eeg, label, _, _, _ in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
+        total_samples += B
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
@@ -162,7 +168,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
             p_batch = p_val.view(1).expand(B)
             stim_feat = stim_branch(f_batch, p_batch)
 
-            # (B) Template Reference 가져오기 (수정된 부분!)
+            # (B) Template Reference 가져오기
             # 현재 가정한 정답(cls_idx)에 해당하는 템플릿을 가져오라고 요청
             # 이때 eeg는 업데이트에는 쓰이지 않지만(eval 모드),
             # DTN 내부 구조상 입력값으로 넣어줘야 함 (무시됨)
@@ -180,16 +186,21 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
         preds = batch_scores.argmax(dim=1)
 
+        # CrossEntropy Loss 계산
+        loss = ce_criterion(batch_scores, label)
+        total_loss += loss.item() * B
+
         all_preds.append(preds.cpu())
         all_labels.append(label.cpu())
 
     all_preds = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
 
+    avg_loss = total_loss / total_samples
     acc = (all_preds == all_labels).float().mean().item()
     itr = compute_itr(acc, n_classes, trial_time)
 
-    return 0.0, acc, itr
+    return avg_loss, acc, itr
 
 
 # ===== Main =====
@@ -276,7 +287,7 @@ def main(args):
 
             params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
                      list(temp_branch.parameters()) + list(dual_attn.parameters())
-            optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-3)
+            optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
             criterion = nn.CrossEntropyLoss()
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
@@ -357,11 +368,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
     parser.add_argument("--subjects", type=str, default="16-70", help="e.g. '16-50' or '16,17,18'")
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=200)
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--d_query", type=int, default=64)
-    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--d_query", type=int, default=16)
+    parser.add_argument("--d_model", type=int, default=32)
     parser.add_argument("--pick_channels", type=str, default="PZ,PO3,PO4,PO5,PO6,POZ,O1,O2,OZ", help=" 'all' ")
     args = parser.parse_args()
 

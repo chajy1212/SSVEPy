@@ -30,6 +30,8 @@ class DualAttention(nn.Module):
 
         self.fc = nn.Linear(d_model, proj_dim)
 
+        self.dropout = nn.Dropout(0.5)
+
         self.rotary_emb = RotaryEmbedding(dim=self.d_head)
 
         # normalization layers
@@ -98,10 +100,6 @@ class DualAttention(nn.Module):
 
         # Pool stim+temp attended outputs
         pooled = attn_out.mean(dim=1)
-        logits = self.fc(pooled)
-
-        # Debug
-        # if not self.training:
-        #     print(f"[DEBUG] Entropy: {attn_entropy.item():.3f}, Scores std: {attn_scores.std().item():.3f}")
+        logits = self.fc(self.dropout(pooled))
 
         return logits, pooled, attn_out, query
