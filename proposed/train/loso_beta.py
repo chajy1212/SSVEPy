@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.tensorboard import SummaryWriter
 
 from data_loader import TorchBETADataset
@@ -102,7 +102,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         stim_feat = stim_branch(freq, phase)
 
         # Template feature (label-independent)
-        temp_feat = temp_branch(eeg)
+        temp_feat = temp_branch(eeg, label)
 
         # Dual Attention forward
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
@@ -134,22 +134,14 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device, n_classes, trial_time):
+             dataloader, ce_criterion, device, n_classes, trial_time,
+             cand_freqs, cand_phases):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
     dual_attn.eval()
 
     all_preds, all_labels = [], []
-
-    # [수정 1] 데이터셋에서 후보 주파수/위상 가져오기
-    # TorchBETADataset에 freqs, phases 속성이 있다고 가정
-    if hasattr(dataloader.dataset, 'freqs') and hasattr(dataloader.dataset, 'phases'):
-        cand_freqs = dataloader.dataset.freqs
-        cand_phases = dataloader.dataset.phases
-    else:
-        # Fallback: 만약 속성이 없다면 직접 에러 처리하거나 계산 필요
-        raise AttributeError("Dataset does not have 'freqs' or 'phases' attribute.")
 
     candidate_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
     candidate_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
@@ -160,23 +152,27 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         B = eeg.size(0)
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        temp_feat = temp_branch(eeg)
 
         batch_scores = []
 
         # Pattern Matching Loop
         for cls_idx, f_val, p_val in zip(candidate_indices, candidate_freqs, candidate_phases):
-            # 현재 배치를 cls_idx라고 가정
+            # (A) Stimulus Reference 생성 (후보 주파수)
             f_batch = f_val.view(1).expand(B)
             p_batch = p_val.view(1).expand(B)
-
-            # Stimulus Feature 생성
             stim_feat = stim_branch(f_batch, p_batch)
 
-            # Dual Attention Forward
+            # (B) Template Reference 가져오기 (수정된 부분!)
+            # 현재 가정한 정답(cls_idx)에 해당하는 템플릿을 가져오라고 요청
+            # 이때 eeg는 업데이트에는 쓰이지 않지만(eval 모드),
+            # DTN 내부 구조상 입력값으로 넣어줘야 함 (무시됨)
+            cls_batch = cls_idx.view(1).expand(B)
+            temp_feat = temp_branch(eeg, cls_batch)
+
+            # (C) Dual Attention: EEG vs (Stimulus + Template)
             logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-            # 해당 클래스의 점수 저장
+            # 점수 저장
             score = logits[:, cls_idx]
             batch_scores.append(score.unsqueeze(1))
 
@@ -210,117 +206,146 @@ def main(args):
     all_accs, all_itrs = [], []
 
     subjects = parse_subjects(args.subjects, "BETA")
-    for test_subj in subjects:
-        print(f"\n--- LOSO Test Subject: {test_subj} ---")
-        train_subjs = [s for s in subjects if s != test_subj]
+    for subj in subjects:
+        print(f"\n--- Subject {subj}: Block-wise LOSO ---")
 
-        # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/BETA_S{test_subj}_EEGNet_{ch_tag}")
+        full_dataset = TorchBETADataset(subjects=[subj],
+                                        data_root=args.beta_data_root,
+                                        pick_channels=args.pick_channels)
 
-        # Dataset
-        train_set = TorchBETADataset(subjects=train_subjs,
-                                     data_root=args.beta_data_root,
-                                     pick_channels=args.pick_channels)
-        test_set = TorchBETADataset(subjects=[test_subj],
-                                    data_root=args.beta_data_root,
-                                    pick_channels=args.pick_channels)
-
-        n_channels = train_set.C
-        n_samples = train_set.T
-        n_classes = len(np.unique(train_set.labels))
-        sfreq = train_set.bs.srate
+        n_channels = full_dataset.C
+        n_samples = full_dataset.T
+        n_classes = len(np.unique(full_dataset.labels))
+        sfreq = full_dataset.bs.srate
         trial_time = n_samples / sfreq
 
-        print(f"[INFO] Dataset: BETA")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+        # 후보 주파수/위상 정보 가져오기 (Pattern Matching용)
+        # BETADataset의 stim_info 활용
+        cand_freqs = full_dataset.bs.stim_info['freqs']
+        cand_phases = full_dataset.bs.stim_info['phases']
 
-        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+        # 블록 정보 가져오기
+        all_blocks = full_dataset.blocks  # numpy array of block indices
+        unique_blocks = np.unique(all_blocks)  # [0, 1, 2, 3]
 
-        # Model
-        eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-        stim_branch = StimulusBranchWithPhase(T=n_samples,
-                                              sfreq=sfreq,
-                                              hidden_dim=args.d_query,
-                                              n_harmonics=3,
-                                              out_dim=args.d_query).to(device)
-        temp_branch = TemplateBranch(n_bands=8, n_features=32,
-                                     n_channels=n_channels,
-                                     n_samples=n_samples,
-                                     n_classes=n_classes,
-                                     D_temp=args.d_query).to(device)
-        dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
-                                  d_query=args.d_query,
-                                  d_model=args.d_model,
-                                  num_heads=4,
-                                  proj_dim=n_classes).to(device)
+        subj_accs, subj_itrs = [], []
 
-        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+        # [핵심] Block-wise Cross Validation Loop
+        for test_block_id in unique_blocks:
+            print(f"\n--- Test Block: {test_block_id} ---")
 
-        params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-                 list(temp_branch.parameters()) + list(dual_attn.parameters())
-        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
-        criterion = nn.CrossEntropyLoss()
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+            # per-subject TensorBoard writer
+            writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/BETA_S{subj}_Block{test_block_id}_EEGNet_{ch_tag}")
 
-        # best record
-        best_acc, best_itr, best_epoch = 0.0, 0.0, 0
+            # Train/Test Split using Indices
+            test_indices = np.where(all_blocks == test_block_id)[0]
+            train_indices = np.where(all_blocks != test_block_id)[0]
 
-        # Train Loop
-        for epoch in range(1, args.epochs + 1):
-            train_loss, train_acc = train_one_epoch(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
-                train_loader, optimizer, criterion, device
-            )
-            test_loss, test_acc, itr = evaluate(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
-                test_loader, criterion, device,
-                n_classes=n_classes, trial_time=trial_time
-            )
+            train_set = Subset(full_dataset, train_indices)
+            test_set = Subset(full_dataset, test_indices)
 
-            scheduler.step()
+            print(f"[INFO] Dataset: BETA")
+            print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
+            print(f"[INFO] Train/Test samples: {len(train_set)}/{len(test_set)}")
+            print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
+            print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
 
-            print(f"\n[Epoch {epoch:03d}] "
-                  f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
-                  f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
-                  f"ITR: {itr:.4f} bits/min")
+            train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+            test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
-            # TensorBoard logging
-            writer.add_scalar("Loss/Train", train_loss, epoch)
-            writer.add_scalar("Loss/Test", test_loss, epoch)
-            writer.add_scalar("Accuracy/Train", train_acc, epoch)
-            writer.add_scalar("Accuracy/Test", test_acc, epoch)
-            writer.add_scalar("ITR/Test", itr, epoch)
+            # Model
+            eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
+            stim_branch = StimulusBranchWithPhase(T=n_samples,
+                                                  sfreq=sfreq,
+                                                  hidden_dim=args.d_query,
+                                                  n_harmonics=3,
+                                                  out_dim=args.d_query).to(device)
+            temp_branch = TemplateBranch(n_bands=8, n_features=32,
+                                         n_channels=n_channels,
+                                         n_samples=n_samples,
+                                         n_classes=n_classes,
+                                         D_temp=args.d_query).to(device)
+            dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
+                                      d_query=args.d_query,
+                                      d_model=args.d_model,
+                                      num_heads=4,
+                                      proj_dim=n_classes).to(device)
 
-            # update best record
-            if test_acc > best_acc:
-                best_acc, best_itr, best_epoch = test_acc, (itr or 0.0), epoch
+            if test_block_id == unique_blocks[0]:  # 첫 번째 블록일 때만 출력
+                print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
-                # Save Model
-                save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                save_path = os.path.join(save_dir, f"BETA_S{test_subj}_EEGNet_{ch_tag}.pth")
+            params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
+                     list(temp_branch.parameters()) + list(dual_attn.parameters())
+            optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-3)
+            criterion = nn.CrossEntropyLoss()
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-                torch.save({
-                    "epoch": best_epoch,
-                    "best_acc": best_acc,
-                    "best_itr": best_itr,
-                    "eeg_branch": eeg_branch.state_dict(),
-                    "stim_branch": stim_branch.state_dict(),
-                    "temp_branch": temp_branch.state_dict(),
-                    "dual_attn": dual_attn.state_dict(),
-                    "optimizer": optimizer.state_dict()
-                }, save_path)
+            # best record
+            best_acc, best_itr, best_epoch = 0.0, 0.0, 0
 
-                print(f"\n[Save] Epoch {best_epoch} → Best model "
-                      f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+            # Train Loop
+            for epoch in range(1, args.epochs + 1):
+                train_loss, train_acc = train_one_epoch(
+                    eeg_branch, stim_branch, temp_branch, dual_attn,
+                    train_loader, optimizer, criterion, device
+                )
+                test_loss, test_acc, itr = evaluate(
+                    eeg_branch, stim_branch, temp_branch, dual_attn,
+                    test_loader, criterion, device,
+                    n_classes=n_classes, trial_time=trial_time,
+                    cand_freqs=cand_freqs, cand_phases=cand_phases
+                )
 
-        writer.close()
+                scheduler.step()
 
-        all_accs.append(best_acc)
-        all_itrs.append(best_itr)
+                print(f"\n[Epoch {epoch:03d}] "
+                      f"Train Loss: {train_loss:.5f} | Train Acc: {train_acc:.5f} || "
+                      f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
+                      f"ITR: {itr:.4f} bits/min")
+
+                # TensorBoard logging
+                writer.add_scalar("Loss/Train", train_loss, epoch)
+                writer.add_scalar("Loss/Test", test_loss, epoch)
+                writer.add_scalar("Accuracy/Train", train_acc, epoch)
+                writer.add_scalar("Accuracy/Test", test_acc, epoch)
+                writer.add_scalar("ITR/Test", itr, epoch)
+
+                # update best record
+                if test_acc > best_acc:
+                    best_acc, best_itr, best_epoch = test_acc, (itr or 0.0), epoch
+
+                    # Save Model
+                    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
+                    save_path = os.path.join(save_dir, f"BETA_S{subj}_Block{test_block_id}_EEGNet_{ch_tag}.pth")
+
+                    torch.save({
+                        "epoch": best_epoch,
+                        "best_acc": best_acc,
+                        "best_itr": best_itr,
+                        "eeg_branch": eeg_branch.state_dict(),
+                        "stim_branch": stim_branch.state_dict(),
+                        "temp_branch": temp_branch.state_dict(),
+                        "dual_attn": dual_attn.state_dict(),
+                        "optimizer": optimizer.state_dict()
+                    }, save_path)
+
+                    print(f"\n[Save] Epoch {best_epoch} → Best model "
+                          f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
+
+            writer.close()
+
+            print(f"\n--> Fold Best: Acc={best_acc:.4f}, ITR={best_itr:.2f} (Ep {best_epoch})")
+
+            subj_accs.append(best_acc)
+            subj_itrs.append(best_itr)
+
+        # Subject Summary
+        mean_acc = np.mean(subj_accs)
+        mean_itr = np.mean(subj_itrs)
+        print(f"\n[Subject {subj} Final] Mean Acc: {mean_acc:.4f}, Mean ITR: {mean_itr:.2f}")
+
+        all_accs.append(mean_acc)
+        all_itrs.append(mean_itr)
 
     # After loop → LOSO summary
     print("\n[Final LOSO]")
@@ -333,7 +358,7 @@ if __name__ == '__main__':
     parser.add_argument("--beta_data_root", type=str, default="/home/brainlab/Workspace/jycha/SSVEP/data/12264401")
     parser.add_argument("--subjects", type=str, default="16-70", help="e.g. '16-50' or '16,17,18'")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=64)
     parser.add_argument("--d_model", type=int, default=128)

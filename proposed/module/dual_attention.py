@@ -101,7 +101,7 @@ class DualAttention(nn.Module):
         logits = self.fc(pooled)
 
         # Debug
-        if not self.training:
-            print(f"[DEBUG] Entropy: {attn_entropy.item():.3f}, Scores std: {attn_scores.std().item():.3f}")
+        # if not self.training:
+        #     print(f"[DEBUG] Entropy: {attn_entropy.item():.3f}, Scores std: {attn_scores.std().item():.3f}")
 
         return logits, pooled, attn_out, query

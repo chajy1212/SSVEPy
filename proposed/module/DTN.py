@@ -43,48 +43,63 @@ class DTN(nn.Module):
 
         # Initialize running templates
         with torch.no_grad():
-            x = torch.zeros(1, 1, n_channels, n_samples)
-            feat = self.feature_extractor(x)
-            self._register_templates(n_classes, *feat.shape[1:])
+            dummy = torch.zeros(1, 1, n_channels, n_samples)
+            feat = self.feature_extractor(dummy) # (1, F, H, W)
+            # running_template은 (Class, F, H, W) 형태
+            self.register_buffer('running_template', torch.zeros(n_classes, *feat.shape[1:]))
+            nn.init.xavier_uniform_(self.running_template, gain=1)
 
 
-    def _register_templates(self, n_classes, *args):
-        """ Initialize class-specific templates """
-        self.register_buffer('running_template', torch.zeros(n_classes, *args))
-        nn.init.xavier_uniform_(self.running_template, gain=1)
-
-
-    def _update_templates(self, x, y):
+    def _update_templates(self, features, y):
         """ Update templates with exponential moving average (EMA) """
         with torch.no_grad():
             self.num_batches_tracked += 1
             factor = (1.0 / float(self.num_batches_tracked)) if self.momentum is None else self.momentum
 
             mask = F.one_hot(y, num_classes=self.running_template.shape[0]).float()  # (B, n_classes)
-            features = self.feature_extractor(x)                                     # (B, F, C’, T’)
 
-            mask_data = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1) * features.unsqueeze(1)
-            new_template = mask_data.sum(0) / (mask.sum(0).view(-1, 1, 1, 1) + self.eps)
+            # features: (B, F, H, W)
+            # mask: (B, C) -> (B, C, 1, 1, 1) 로 확장하여 브로드캐스팅                                   # (B, F, C’, T’)
+            mask_data = mask.view(*mask.shape, 1, 1, 1) * features.unsqueeze(1)                      # (B, C, F, H, W)
 
-            self.running_template = (1 - factor) * self.running_template + factor * new_template
+            # 배치 차원(0)에 대해 합산
+            sum_features = mask_data.sum(0)  # (C, F, H, W)
+            sum_counts = mask.sum(0).view(-1, 1, 1, 1) + self.eps
+
+            new_template_batch = sum_features / sum_counts
+
+            # 현재 배치에 등장한 클래스만 업데이트 (mask 합이 0보다 큰 곳)
+            update_idx = (mask.sum(0) > 0)
+
+            self.running_template[update_idx] = (1 - factor) * self.running_template[update_idx] \
+                                                + factor * new_template_batch[update_idx]
 
 
-    def forward(self, x, y=None, return_feat=True):
+    def forward(self, x, y=None):
         """
-        x: (B, 1, C, T)
-        return_feat=True → (logits=None, feat)
+        y (LongTensor): (B,) 타겟 클래스 인덱스 (학습 시: 정답, 평가 시: 후보)
         """
+        # 1. 입력 EEG 특징 추출
         x = self.instance_norm(x)
-        feat = self.feature_extractor(x)        # (B, F, C’, T’)
-        feat = self.global_pool(feat)           # (B, F, 1, 1)
-        feat = feat.view(feat.size(0), -1)      # (B, F)
-        feat = self.fc_drop(feat)
+        features = self.feature_extractor(x)  # (B, F, H, W)
 
-        # Update templates if training
+        # 2. 학습 모드이고 정답 라벨(y)이 있으면 템플릿 업데이트
         if self.training and y is not None:
-            self._update_templates(x, y)
+            self._update_templates(features, y)
 
-        if return_feat:
-            return None, feat
+        # 3. 반환할 특징 결정
+        if y is not None:
+            # Dual Attention을 위해 'y' 클래스에 해당하는 '템플릿'을 반환
+            # running_template: (Classes, F, H, W) -> 선택: (B, F, H, W)
+            out_feat = self.running_template[y]
+        else:
+            # 라벨이 없으면 입력 EEG 특징 자체를 반환 (Fallback)
+            out_feat = features
 
-        return None, feat
+        # 4. 후처리 (Pooling & Dropout)
+        # 템플릿도 EEG 특징과 동일한 차원(Vector)으로 변환해야 함
+        out_feat = self.global_pool(out_feat)  # (B, F, 1, 1)
+        out_feat = out_feat.view(out_feat.size(0), -1)  # (B, F)
+        out_feat = self.fc_drop(out_feat)
+
+        return out_feat

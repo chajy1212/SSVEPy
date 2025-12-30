@@ -224,6 +224,8 @@ class Nakanishi2015Dataset(Dataset):
 
 class ExpNakanishi2015Dataset(Dataset):
     def __init__(self, subjects=[1], pick_channels="all"):
+        self.subjects = subjects
+
         dataset = Nakanishi2015()
         dataset.subject_list = list(range(1, 11))
         paradigm = SSVEP()

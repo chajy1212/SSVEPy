@@ -130,8 +130,8 @@ class StimulusBranchWithPhase(nn.Module):
 class TemplateBranch(nn.Module):
     """
     Template branch using DTN.
-    Input : (B, 1, C, T), labels (optional)
-    Output : (B, D_temp) latent representation
+    Input : (B, 1, C, T), labels (B,)
+    Output : (B, D_temp) latent representation of the TEMPLATE
     """
     def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
@@ -144,12 +144,12 @@ class TemplateBranch(nn.Module):
 
     def forward(self, x, y=None, inference=False):
         """
-        inference=False: 학습 중에도 라벨을 사용하지 않고 pure EEG feature만 반환
-        inference=True : 평가 중에도 동일하게 pure EEG feature만 반환
+        x: EEG input (템플릿 업데이트용)
+        y: Class index (가져올 템플릿의 인덱스)
         """
-        # always label-independent EEG features
-        _, feat = self.network(x, None, return_feat=True)
-        if feat.dim() == 3:  # (B, n_bands, n_features)
-            feat = feat.mean(1)
+        # DTN을 통해 'y' 클래스의 템플릿 특징을 가져옴
+        feat = self.network(x, y)
+
+        # Projection
         feat = self.proj(feat)
         return feat

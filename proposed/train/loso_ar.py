@@ -34,17 +34,9 @@ def print_total_model_size(*models):
 
 # ===== ITR function =====
 def compute_itr(acc, n_classes, trial_time, eps=1e-12):
-    """
-    Compute Information Transfer Rate (ITR) in bits/min.
-    acc: accuracy (0~1)
-    n_classes: number of target classes
-    trial_time: trial length in seconds
-    """
     if acc <= 0 or n_classes <= 1:
         return 0.0
-
-    acc = min(max(acc, eps), 1 - eps)  # avoid log(0) or log(negative)
-
+    acc = min(max(acc, eps), 1 - eps)
     itr = (np.log2(n_classes) +
            acc * np.log2(acc) +
            (1 - acc) * np.log2((1 - acc) / (n_classes - 1)))
@@ -54,12 +46,9 @@ def compute_itr(acc, n_classes, trial_time, eps=1e-12):
 
 # ===== Subject parser =====
 def parse_subjects(subjects_arg, dataset_name=""):
-    """
-    subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
-    """
     if subjects_arg.lower() == "all":
         if dataset_name == "AR":
-            subjects = list(range(1, 25))  # 1 ~ 24
+            subjects = list(range(1, 25))
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -94,19 +83,21 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # EEG feature extraction
+        # EEG feature
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # Stimulus feature with perturbation
-        stim_feat = stim_branch(freq, phase)
+        # [수정] LOSO 학습 시에는 노이즈(Perturbation)를 추가하는 것이 일반화에 좋습니다.
+        freq_pert = freq + torch.randn_like(freq) * 0.1  # ±0.1 Hz noise
+        phase_pert = phase + torch.randn_like(phase) * 0.2  # ±0.2 rad noise
+        stim_feat = stim_branch(freq_pert, phase_pert)
 
-        # Template feature (label-independent)
-        temp_feat = temp_branch(eeg)
+        # [수정] Template: 정답 라벨 입력 (업데이트 발생)
+        temp_feat = temp_branch(eeg, label)
 
-        # Dual Attention forward
+        # Dual Attention
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-        # CE loss
+        # Loss
         loss = ce_criterion(logits, label) + dual_attn.loss_entropy
         loss.backward()
         optimizer.step()
@@ -129,7 +120,11 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device, n_classes, trial_time):
+             dataloader, ce_criterion, device, n_classes, trial_time,
+             cand_freqs, cand_phases):
+    """
+    [수정] Pattern Matching 방식으로 완전히 변경
+    """
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -138,43 +133,40 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     task_correct, task_total = {}, {}
 
-    # 후보군 리스트 가져오기
-    if hasattr(dataloader.dataset, 'freqs') and hasattr(dataloader.dataset, 'phases'):
-        cand_freqs = dataloader.dataset.freqs
-        cand_phases = dataloader.dataset.phases
-    else:
-        raise AttributeError("Dataset does not have 'freqs' or 'phases' attribute.")
-
+    # 후보군 텐서 변환
     candidate_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
     candidate_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
     candidate_indices = torch.arange(n_classes).to(device)
 
+    # 정답(freq, phase)은 사용하지 않음 (_)
     for eeg, label, _, _, task in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
 
+        # 1. EEG Feature
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        temp_feat = temp_branch(eeg)
 
         batch_scores = []
 
-        # Pattern Matching Loop
+        # 2. Pattern Matching Loop
         for cls_idx, f_val, p_val in zip(candidate_indices, candidate_freqs, candidate_phases):
-            # 현재 배치를 cls_idx라고 가정
+            # (A) Stimulus: 후보 주파수/위상 (노이즈 없음)
             f_batch = f_val.view(1).expand(B)
             p_batch = p_val.view(1).expand(B)
-
-            # 노이즈 없이 정직하게 비교
             stim_feat = stim_branch(f_batch, p_batch)
 
-            # Dual Attention
+            # (B) Template: 후보 클래스 인덱스 -> 해당 템플릿 호출
+            cls_batch = cls_idx.view(1).expand(B)
+            temp_feat = temp_branch(eeg, cls_batch)
+
+            # (C) Dual Attention
             logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-            # Score 저장
+            # 점수 저장
             score = logits[:, cls_idx]
             batch_scores.append(score.unsqueeze(1))
 
-        # 가장 점수 높은 클래스 선택
+        # 가장 높은 점수 선택
         batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
         preds = batch_scores.argmax(dim=1)
 
@@ -194,8 +186,6 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     task_acc = {t: task_correct[t] / task_total[t] for t in task_total if task_total[t] > 0}
     task_itr = {t: compute_itr(a, n_classes, trial_time) for t, a in task_acc.items()}
-
-    # ITR
     itr = compute_itr(acc, n_classes, trial_time)
 
     return 0.0, acc, task_acc, itr, task_itr
@@ -206,7 +196,6 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Channel tag
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
@@ -230,19 +219,23 @@ def main(args):
         for test_subj in subj_list:
             print(f"\n========== [Test Subject {test_subj:02d}] ==========")
 
-            # Train/Test subject split
+            # Train/Test Split
             train_subj_list = [s for s in subj_list if s != test_subj]
 
-            # per-subject TensorBoard writer
-            writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOAR{exp_name}_sub{test_subj}_EEGNet_{ch_tag}")
+            writer = SummaryWriter(
+                log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOAR{exp_name}_sub{test_subj}_EEGNet_{ch_tag}")
 
             # Build datasets
             train_datasets = []
-            for s in train_subj_list:
-                train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="train"))
+            try:
+                for s in train_subj_list:
+                    train_datasets.append(ARDataset(args.ar_data_root, s, exp_name, session="train"))
 
-            train_dataset = ConcatDataset(train_datasets)
-            test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="test")
+                train_dataset = ConcatDataset(train_datasets)
+                test_dataset = ARDataset(args.ar_data_root, test_subj, exp_name, session="test")
+            except FileNotFoundError as e:
+                print(e)
+                continue
 
             n_channels = test_dataset.C
             n_samples = test_dataset.T
@@ -250,12 +243,23 @@ def main(args):
             sfreq = test_dataset.sfreq
             trial_time = n_samples / sfreq
 
+            # [추가] Class별 고유 주파수/위상 정보 추출 (evaluate에 전달하기 위함)
+            cand_freqs = [0.0] * n_classes
+            cand_phases = [0.0] * n_classes
+
+            # test_dataset에서 각 클래스별 주파수/위상 정보 수집
+            # (모든 샘플이 같은 매핑을 공유한다고 가정)
+            unique_labels = np.unique(test_dataset.labels)
+            for l in unique_labels:
+                idx = np.where(test_dataset.labels == l)[0][0]
+                cand_freqs[l] = test_dataset.freqs[idx]
+                cand_phases[l] = test_dataset.phases[idx]
+
             print(f"[INFO] Dataset: AR")
             print(f"[INFO] Train subjects: {train_subj_list}")
             print(f"[INFO] Test subject: {test_subj}")
             print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-            print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-            print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
+            print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}")
 
             train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
@@ -278,12 +282,6 @@ def main(args):
                                       num_heads=4,
                                       proj_dim=n_classes).to(device)
 
-            # Debug check
-            train_labels_all = np.concatenate([dset.labels for dset in train_datasets])
-            print(f"[DEBUG] Train unique labels (block * trial) : {len(np.unique(train_labels_all))}")
-            print(f"[DEBUG] Test unique labels (block * trial)  : {len(np.unique(test_dataset.labels))}")
-            print(f"[DEBUG] Model output dim (freq * phase)     : {n_classes}\n")
-
             print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
             params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
@@ -293,11 +291,9 @@ def main(args):
             ce_criterion = nn.CrossEntropyLoss()
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-            # best record
             best_acc, best_itr, best_epoch = 0.0, 0.0, 0
             best_task_acc, best_task_itr = None, None
 
-            # Train Loop
             for epoch in range(1, args.epochs + 1):
                 train_loss, train_acc = train_one_epoch(
                     eeg_branch, stim_branch, temp_branch, dual_attn,
@@ -306,7 +302,8 @@ def main(args):
                 test_loss, test_acc, task_acc, itr, task_itr = evaluate(
                     eeg_branch, stim_branch, temp_branch, dual_attn,
                     test_loader, ce_criterion, device,
-                    n_classes=n_classes, trial_time=trial_time
+                    n_classes=n_classes, trial_time=trial_time,
+                    cand_freqs=cand_freqs, cand_phases=cand_phases  # [수정] 전달
                 )
 
                 scheduler.step()
@@ -316,20 +313,12 @@ def main(args):
                       f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                       f"ITR: {itr:.4f} bits/min")
 
-                for t in task_acc.keys():
-                    print(f"   Task {t:<6s} | Acc={task_acc[t]:.5f} | ITR={task_itr[t]:.4f}")
-
-                # TensorBoard logging
                 writer.add_scalar("Loss/Train", train_loss, epoch)
                 writer.add_scalar("Loss/Test", test_loss, epoch)
                 writer.add_scalar("Accuracy/Train", train_acc, epoch)
                 writer.add_scalar("Accuracy/Test", test_acc, epoch)
                 writer.add_scalar("ITR/Test", itr, epoch)
-                for t in task_acc.keys():
-                    writer.add_scalar(f"TaskAcc/{t}", task_acc[t], epoch)
-                    writer.add_scalar(f"TaskITR/{t}", task_itr[t], epoch)
 
-                # update best record
                 if test_acc > best_acc:
                     best_acc = test_acc
                     best_itr = itr
@@ -337,9 +326,11 @@ def main(args):
                     best_task_acc = task_acc
                     best_task_itr = task_itr
 
-                    # Save Model
                     save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
                     save_path = os.path.join(save_dir, f"LOSOAR{exp_name}_sub{test_subj}_EEGNet_{ch_tag}.pth")
+
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir, exist_ok=True)
 
                     torch.save({
                         "epoch": best_epoch,
@@ -350,21 +341,15 @@ def main(args):
                         "temp_branch": temp_branch.state_dict(),
                         "dual_attn": dual_attn.state_dict(),
                         "optimizer": optimizer.state_dict(),
-                        "best_task_acc": best_task_acc,
-                        "best_task_itr": best_task_itr
                     }, save_path)
 
                     print(f"\n[Save] Epoch {best_epoch} → Best model "
                           f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
-                    print(f"Best Task Acc: {best_task_acc}")
-                    print(f"Best Task ITR: {best_task_itr}")
 
             writer.close()
-
             all_accs.append(best_acc)
             all_itrs.append(best_itr)
 
-        # ---------------- Summary per Experiment ----------------
         if len(all_accs) > 0:
             print(f"\n[{exp_name} Summary] Mean Acc: {np.mean(all_accs):.5f} ± {np.std(all_accs):.5f}")
             print(f"[{exp_name} Summary] Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
@@ -382,7 +367,6 @@ if __name__ == '__main__':
     parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO5,PO6,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
-    # Parse channel selection
     if isinstance(args.pick_channels, str):
         if args.pick_channels.lower() == "all":
             args.pick_channels = "all"

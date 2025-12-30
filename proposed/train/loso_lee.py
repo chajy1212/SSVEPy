@@ -34,17 +34,9 @@ def print_total_model_size(*models):
 
 # ===== ITR function =====
 def compute_itr(acc, n_classes, trial_time, eps=1e-12):
-    """
-    Compute Information Transfer Rate (ITR) in bits/min.
-    acc: accuracy (0~1)
-    n_classes: number of target classes
-    trial_time: trial length in seconds
-    """
     if acc <= 0 or n_classes <= 1:
         return 0.0
-
-    acc = min(max(acc, eps), 1 - eps)  # avoid log(0) or log(negative)
-
+    acc = min(max(acc, eps), 1 - eps)
     itr = (np.log2(n_classes) +
            acc * np.log2(acc) +
            (1 - acc) * np.log2((1 - acc) / (n_classes - 1)))
@@ -54,9 +46,6 @@ def compute_itr(acc, n_classes, trial_time, eps=1e-12):
 
 # ===== Subject parser =====
 def parse_subjects(subjects_arg, dataset_name=""):
-    """
-    subjects_arg: e.g. "1,2,3", "1-10", "1-5,7,9-12", "all"
-    """
     if subjects_arg.lower() == "all":
         if dataset_name == "Lee2019":
             subjects = list(range(1, 55))  # 1 ~ 54
@@ -79,7 +68,10 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, ce_criterion, device):
+                    dataloader, optimizer, ce_criterion, device, dataset_freqs):
+    """
+    [수정됨] dataset_freqs를 인자로 받아서 label -> frequency 변환 수행
+    """
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -87,6 +79,12 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     all_preds, all_labels = [], []
     total_loss = 0.0
+
+    # 주파수 텐서 준비 (Label -> Hz 매핑용)
+    if not isinstance(dataset_freqs, torch.Tensor):
+        freqs_tensor = torch.tensor(dataset_freqs, dtype=torch.float32).to(device)
+    else:
+        freqs_tensor = dataset_freqs.to(device)
 
     for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
@@ -96,8 +94,13 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         # EEG feature extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # Stimulus feature (no phase)
-        stim_feat = stim_branch(label)
+        # [수정] Label(인덱스)을 실제 주파수(Hz)로 변환
+        current_freqs = freqs_tensor[label]  # (B,)
+
+        # Stimulus feature (Hz 값 입력)
+        stim_feat = stim_branch(current_freqs)
+
+        # Template feature (Label 인덱스 입력 -> 템플릿 업데이트용)
         temp_feat = temp_branch(eeg, label)
 
         # Dual Attention forward
@@ -126,7 +129,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 @torch.no_grad()
 def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
-             dataloader, ce_criterion, device, n_classes, trial_time):
+             dataloader, ce_criterion, device, n_classes, trial_time, dataset_freqs):
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
@@ -136,27 +139,34 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
 
     candidate_indices = torch.arange(n_classes).to(device)
 
+    # dataset_freqs가 numpy array나 list라면 tensor로 변환
+    if not isinstance(dataset_freqs, torch.Tensor):
+        candidate_freqs = torch.tensor(dataset_freqs, dtype=torch.float32).to(device)
+    else:
+        candidate_freqs = dataset_freqs.to(device)
+
     for eeg, label, subj in dataloader:
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
 
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-        temp_feat = temp_branch(eeg)
 
         batch_scores = []
 
         # 모든 후보 클래스에 대해 반복
-        for cls_idx in candidate_indices:
-            # 현재 배치를 cls_idx라고 가정
+        for cls_idx, freq_val in zip(candidate_indices, candidate_freqs):
+            # (A) Stimulus Feature: 실제 주파수(Hz) 사용
+            freq_batch = freq_val.view(1).expand(B)
+            stim_feat = stim_branch(freq_batch)  # Hz값 입력
+
+            # (B) Template Feature: 클래스 인덱스 사용
             cls_batch = cls_idx.view(1).expand(B)
+            temp_feat = temp_branch(eeg, cls_batch)  # 인덱스 입력
 
-            # Stimulus Feature: 가정된 클래스의 파형 생성
-            stim_feat = stim_branch(cls_batch)
-
-            # Dual Attention Forward
+            # (C) Dual Attention
             logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-            # 해당 클래스(cls_idx)에 대한 점수만 가져옴
+            # 해당 클래스 점수 추출
             score = logits[:, cls_idx]
             batch_scores.append(score.unsqueeze(1))
 
@@ -181,7 +191,6 @@ def main(args):
     set_seed()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Channel tag
     if args.pick_channels == "all":
         ch_tag = "allch"
     else:
@@ -194,10 +203,9 @@ def main(args):
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
 
-        # per-subject TensorBoard writer
-        writer = SummaryWriter(log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
+        writer = SummaryWriter(
+            log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
 
-        # Dataset split
         train_dataset = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
@@ -206,20 +214,13 @@ def main(args):
         n_classes = train_dataset.n_classes
         sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
+
+        # 주파수 정보 확보
         freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
         print(f"[INFO] Dataset: Lee2019")
-        print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")
-        print(f"[INFO] Train subjects: {np.unique(train_dataset.subjects)}")
-        print(f"[INFO] Test subjects: {np.unique(test_dataset.subjects)}")
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-        print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time:.2f}s, Sampling Rate={sfreq}Hz\n")
-
-        print("Unique train labels:", np.unique(train_dataset.labels))
-        print("Unique test labels:", np.unique(test_dataset.labels))
-        print("Stimulus freqs train:", train_dataset.freqs)
-        print("Stimulus freqs test:\n", test_dataset.freqs)
+        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}")
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
@@ -250,19 +251,19 @@ def main(args):
         ce_criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-        # best record
         best_acc, best_itr, best_epoch = 0.0, 0.0, 0
 
-        # Train Loop
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc = train_one_epoch(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
-                train_loader, optimizer, ce_criterion, device
+                train_loader, optimizer, ce_criterion, device,
+                dataset_freqs=freqs  # [수정] 학습 함수에도 주파수 리스트 전달
             )
             test_loss, test_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 test_loader, ce_criterion, device,
-                n_classes=n_classes, trial_time=trial_time
+                n_classes=n_classes, trial_time=trial_time,
+                dataset_freqs=freqs  # 평가 함수에도 주파수 리스트 전달
             )
 
             scheduler.step()
@@ -272,22 +273,22 @@ def main(args):
                   f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                   f"ITR: {itr:.4f} bits/min")
 
-            # TensorBoard logging
             writer.add_scalar("Loss/Train", train_loss, epoch)
             writer.add_scalar("Loss/Test", test_loss, epoch)
             writer.add_scalar("Accuracy/Train", train_acc, epoch)
             writer.add_scalar("Accuracy/Test", test_acc, epoch)
             writer.add_scalar("ITR/Test", itr, epoch)
 
-            # update best record
             if test_acc > best_acc:
                 best_acc = test_acc
                 best_itr = itr
                 best_epoch = epoch
 
-                # Save Model
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
                 save_path = os.path.join(save_dir, f"LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir, exist_ok=True)
 
                 torch.save({
                     "epoch": best_epoch,
@@ -304,11 +305,9 @@ def main(args):
                       f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
         writer.close()
-
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
-    # After loop → LOSO summary
     print("\n[Final LOSO]")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
@@ -325,7 +324,6 @@ if __name__ == '__main__':
     parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
-    # Parse channel selection
     if isinstance(args.pick_channels, str):
         if args.pick_channels.lower() == "all":
             args.pick_channels = "all"
