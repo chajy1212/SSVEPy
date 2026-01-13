@@ -28,11 +28,6 @@ class EEGBranch(nn.Module):
 
 
 class StimulusBranch(nn.Module):
-    """
-    Stimulus branch using StimulusEncoder.
-    Input : (B, T, 2) sinusoidal references (sin, cos)
-    Output: (B, D_stim)
-    """
     def __init__(self, T, sfreq=250.0, hidden_dim=128, n_harmonics=3):
         super().__init__()
         self.T = T
@@ -45,12 +40,6 @@ class StimulusBranch(nn.Module):
         self.register_buffer("t", t)
 
     def forward(self, freqs):
-        """
-        Args:
-            freq: (B,) corrected freq
-        Returns:
-            feat: (B, D_stim)
-        """
         if freqs.ndim == 1:
             freqs = freqs.unsqueeze(1)
 
@@ -70,11 +59,6 @@ class StimulusBranch(nn.Module):
 
 
 class StimulusBranchWithPhase(nn.Module):
-    """
-    Stimulus branch using StimulusEncoder with subject-specific phase correction.
-    Input : labels (B,), phases (B,)
-    Output: (B, D_stim)
-    """
     def __init__(self, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=None):
         super().__init__()
         self.T = T
@@ -99,13 +83,6 @@ class StimulusBranchWithPhase(nn.Module):
         self.register_buffer("t", t)  # (T,)
 
     def forward(self, freqs, phases):
-        """
-        Args:
-            freqs:  (B,) frequencies (Hz)
-            phases: (B,) phases (radian)
-        Returns:
-            feat: (B, out_dim)
-        """
         device = freqs.device
         B = freqs.size(0)
         t = self.t.to(device).unsqueeze(0)  # (1, T)
@@ -127,11 +104,6 @@ class StimulusBranchWithPhase(nn.Module):
 
 
 class TemplateBranch(nn.Module):
-    """
-    Template branch using DTN.
-    Input : (B, 1, C, T), labels (B,)
-    Output : (B, D_temp) latent representation of the template
-    """
     def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
         self.network = DTN(n_bands=n_bands, n_features=n_features,
