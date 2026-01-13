@@ -7,7 +7,6 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 from data_loader import Lee2019Dataset_LOSO
 from dual_attention import DualAttention
@@ -69,9 +68,6 @@ def parse_subjects(subjects_arg, dataset_name=""):
 # ===== Train / Eval =====
 def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
                     dataloader, optimizer, ce_criterion, device, dataset_freqs):
-    """
-    dataset_freqs를 인자로 받아서 label -> frequency 변환 수행
-    """
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
@@ -80,7 +76,7 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
     all_preds, all_labels = [], []
     total_loss = 0.0
 
-    # 주파수 텐서 준비 (Label -> Hz 매핑용)
+    # Prepare frequency tensor
     if not isinstance(dataset_freqs, torch.Tensor):
         freqs_tensor = torch.tensor(dataset_freqs, dtype=torch.float32).to(device)
     else:
@@ -91,16 +87,14 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # EEG feature extraction
+        # EEG Feature Extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # Label(인덱스)을 실제 주파수(Hz)로 변환
+        # Stimulus Branch: Convert Label Index to Frequency (Hz)
         current_freqs = freqs_tensor[label]  # (B,)
-
-        # Stimulus feature (Hz 값 입력)
         stim_feat = stim_branch(current_freqs)
 
-        # Template feature (Label 인덱스 입력 -> 템플릿 업데이트용)
+        # Template Branch: Input true label for template update
         temp_feat = temp_branch(eeg, label)
 
         # Dual Attention forward
@@ -136,15 +130,12 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     dual_attn.eval()
 
     all_preds, all_labels = [], []
-
     total_loss = 0.0
 
     candidate_indices = torch.arange(n_classes).to(device)
-
-    # dataset size counting
     total_samples = 0
 
-    # dataset_freqs가 numpy array나 list라면 tensor로 변환
+    # Prepare candidate frequency tensor
     if not isinstance(dataset_freqs, torch.Tensor):
         candidate_freqs = torch.tensor(dataset_freqs, dtype=torch.float32).to(device)
     else:
@@ -155,32 +146,33 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         B = eeg.size(0)
         total_samples += B
 
+        # Extract EEG Feature (Shared across candidates)
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
         batch_scores = []
 
-        # 모든 후보 클래스에 대해 반복
+        # Pattern Matching Loop (Iterate over all classes)
         for cls_idx, freq_val in zip(candidate_indices, candidate_freqs):
-            # (A) Stimulus Feature: 실제 주파수(Hz) 사용
+            # (A) Stimulus: Input the candidate frequency (Hz)
             freq_batch = freq_val.view(1).expand(B)
-            stim_feat = stim_branch(freq_batch)  # Hz값 입력
+            stim_feat = stim_branch(freq_batch)
 
-            # (B) Template Feature: 클래스 인덱스 사용
+            # (B) Template: Input candidate class index to retrieve the corresponding template
             cls_batch = cls_idx.view(1).expand(B)
-            temp_feat = temp_branch(eeg, cls_batch)  # 인덱스 입력
+            temp_feat = temp_branch(eeg, cls_batch)
 
             # (C) Dual Attention
             logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
-            # 해당 클래스 점수 추출
+            # Extract the score for the current candidate class
             score = logits[:, cls_idx]
             batch_scores.append(score.unsqueeze(1))
 
-        # 가장 높은 점수 선택
+        # Select the class with the highest score
         batch_scores = torch.cat(batch_scores, dim=1)  # (B, n_classes)
         preds = batch_scores.argmax(dim=1)
 
-        # CrossEntropy Loss 계산
+        # Calculate CrossEntropy Loss
         loss = ce_criterion(batch_scores, label)
         total_loss += loss.item() * B
 
@@ -214,9 +206,6 @@ def main(args):
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
 
-        writer = SummaryWriter(
-            log_dir=f"/home/brainlab/Workspace/jycha/SSVEP/runs/LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}")
-
         train_dataset = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
@@ -225,18 +214,15 @@ def main(args):
         n_classes = train_dataset.n_classes
         sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
-
-        # 주파수 정보 확보
         freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
-        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}")
+        print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time}s")
 
         train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
-        # Model
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
         stim_branch = StimulusBranch(T=n_samples,
                                      sfreq=sfreq,
@@ -258,7 +244,7 @@ def main(args):
         params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
                  list(temp_branch.parameters()) + list(dual_attn.parameters())
 
-        optimizer = optim.Adam(params, lr=args.lr, weight_decay=1e-4)
+        optimizer = optim.Adam(params, lr=args.lr, weight_decay=args.weight_decay)
         ce_criterion = nn.CrossEntropyLoss()
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
@@ -268,13 +254,13 @@ def main(args):
             train_loss, train_acc = train_one_epoch(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 train_loader, optimizer, ce_criterion, device,
-                dataset_freqs=freqs  # 학습 함수에도 주파수 리스트 전달
+                dataset_freqs=freqs
             )
             test_loss, test_acc, itr = evaluate(
                 eeg_branch, stim_branch, temp_branch, dual_attn,
                 test_loader, ce_criterion, device,
                 n_classes=n_classes, trial_time=trial_time,
-                dataset_freqs=freqs  # 평가 함수에도 주파수 리스트 전달
+                dataset_freqs=freqs
             )
 
             scheduler.step()
@@ -284,12 +270,6 @@ def main(args):
                   f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                   f"ITR: {itr:.4f} bits/min")
 
-            writer.add_scalar("Loss/Train", train_loss, epoch)
-            writer.add_scalar("Loss/Test", test_loss, epoch)
-            writer.add_scalar("Accuracy/Train", train_acc, epoch)
-            writer.add_scalar("Accuracy/Test", test_acc, epoch)
-            writer.add_scalar("ITR/Test", itr, epoch)
-
             if test_acc > best_acc:
                 best_acc = test_acc
                 best_itr = itr
@@ -297,9 +277,6 @@ def main(args):
 
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
                 save_path = os.path.join(save_dir, f"LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
-
-                if not os.path.exists(save_dir):
-                    os.makedirs(save_dir, exist_ok=True)
 
                 torch.save({
                     "epoch": best_epoch,
@@ -315,7 +292,6 @@ def main(args):
                 print(f"\n[Save] Epoch {best_epoch} → Best model "
                       f"(Acc={best_acc:.5f}, ITR={best_itr:.4f}) saved to {save_path}")
 
-        writer.close()
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
@@ -328,10 +304,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=16)
-    parser.add_argument("--d_model", type=int, default=32)
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
