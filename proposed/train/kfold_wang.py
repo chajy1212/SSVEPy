@@ -80,18 +80,19 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
         optimizer.zero_grad()
 
-        # 1. Feature Extraction
+        # Feature Extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
 
-        # 2. Stimulus Feature (JFPM: Freq + Phase)
+        # Stimulus Feature (JFPM: Freq + Phase)
+        # Retrieve frequency and phase corresponding to the label
         current_freqs = freqs_tensor[label]
         current_phases = phases_tensor[label]
         stim_feat = stim_branch(current_freqs, current_phases)
 
-        # 3. Template Feature
+        # Template Feature
         temp_feat = temp_branch(eeg, label)
 
-        # 4. Dual Attention
+        # Dual Attention
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
         # Loss
@@ -125,23 +126,28 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         eeg, label = eeg.to(device), label.to(device)
         B = eeg.size(0)
 
+        # EEG Feature
         eeg_feat = eeg_branch(eeg, return_sequence=True)
         batch_scores = []
 
+        # Pattern Matching Loop
         for k in candidate_indices:
-            # (A) Stimulus: 후보 Freq & Phase
+            # (A) Stimulus: Candidate Freq & Phase
             f_val = freqs_tensor[k].view(1).expand(B)
             p_val = phases_tensor[k].view(1).expand(B)
             stim_feat = stim_branch(f_val, p_val)
 
-            # (B) Template
+            # (B) Template: Candidate Class Index
             cls_batch = k.view(1).expand(B)
             temp_feat = temp_branch(eeg, cls_batch)
 
             # (C) Dual Attention
             logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+
+            # Store score for class k
             batch_scores.append(logits[:, k].unsqueeze(1))
 
+        # Select class with highest score
         batch_scores = torch.cat(batch_scores, dim=1)
         loss = ce_criterion(batch_scores, label)
         total_loss += loss.item() * B
@@ -176,10 +182,12 @@ def main(args):
     for subj in subjects:
         print(f"\n[Subject {subj:02d}] Loading Data...")
 
-        # 전체 데이터 로드
+        # Load Full Dataset for the Subject
         full_ds = Wang2016Dataset(subjects=[subj], data_root=args.wang_data_root, pick_channels=args.pick_channels)
 
-        if full_ds.N == 0: continue
+        if full_ds.N == 0:
+            print(f"[Warning] No data found for Subject {subj}. Skipping...")
+            continue
 
         n_channels = full_ds.C
         n_samples = full_ds.T
@@ -187,18 +195,19 @@ def main(args):
         sfreq = full_ds.sfreq
         trial_time = n_samples / sfreq
 
-        # Freq/Phase Tensor
+        # Prepare Frequency/Phase Tensors
         freqs_t = torch.tensor(full_ds.freqs, dtype=torch.float32).to(device)
         phases_t = torch.tensor(full_ds.phases, dtype=torch.float32).to(device)
 
         subj_fold_accs = []
         subj_itrs = []
 
-        # 6-Fold CV Loop
+        # 6-Fold Cross-Validation (Block-based)
+        # Wang2016 has 6 blocks. We use 5 for training and 1 for testing.
         for fold in range(6):
             print(f"\n  --- Subject {subj:02d} | Fold {fold + 1}/6 (Block {fold}) ---")
 
-            # Data Split
+            # Data Split: Wang2016 is ordered by Block then Class (40 classes per block)
             indices = np.arange(len(full_ds))
             test_block_mask = (indices // 40) == fold
 
@@ -211,14 +220,23 @@ def main(args):
             train_loader = DataLoader(Subset(full_ds, train_idx), batch_size=args.batch_size, shuffle=True)
             test_loader = DataLoader(Subset(full_ds, test_idx), batch_size=args.batch_size, shuffle=False)
 
-            # Model Init
             eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
-            stim_branch = StimulusBranchWithPhase(T=n_samples, sfreq=sfreq, hidden_dim=args.d_query,
-                                                  n_harmonics=5, out_dim=args.d_query).to(device)
-            temp_branch = TemplateBranch(n_bands=8, n_features=32, n_channels=n_channels,
-                                         n_samples=n_samples, n_classes=n_classes, D_temp=args.d_query).to(device)
-            dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim, d_query=args.d_query,
-                                      d_model=args.d_model, num_heads=4, proj_dim=n_classes).to(device)
+            stim_branch = StimulusBranchWithPhase(T=n_samples,
+                                                  sfreq=sfreq,
+                                                  hidden_dim=args.d_query,
+                                                  n_harmonics=5,
+                                                  out_dim=args.d_query).to(device)
+            temp_branch = TemplateBranch(n_bands=8,
+                                         n_features=32,
+                                         n_channels=n_channels,
+                                         n_samples=n_samples,
+                                         n_classes=n_classes,
+                                         D_temp=args.d_query).to(device)
+            dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
+                                      d_query=args.d_query,
+                                      d_model=args.d_model,
+                                      num_heads=4,
+                                      proj_dim=n_classes).to(device)
 
             if subj == 1 and fold == 0:
                 print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
@@ -252,7 +270,6 @@ def main(args):
                     best_epoch = ep
                     best_mark = "(*)"
 
-                    # 각 Fold의 최고 성능 모델 저장
                     save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
                     save_path = os.path.join(save_dir, f"Wang2016_S{subj}_Fold{fold}_EEGNet_{ch_tag}.pth")
                     torch.save({

@@ -338,6 +338,7 @@ def main(args):
             all_accs.append(best_acc)
             all_itrs.append(best_itr)
 
+        print(f"\n========== FINAL RESULT ==========")
         if len(all_accs) > 0:
             print(f"\n[{exp_name} Summary] Mean Acc: {np.mean(all_accs):.5f} ± {np.std(all_accs):.5f}")
             print(f"[{exp_name} Summary] Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")

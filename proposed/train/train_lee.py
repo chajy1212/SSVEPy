@@ -306,7 +306,7 @@ def main(args):
         all_accs.append(best_acc)
         all_itrs.append(best_itr)
 
-    print("\n[Final Result]")
+    print(f"\n========== FINAL RESULT ==========")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 

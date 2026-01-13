@@ -94,12 +94,15 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
+        # Feature Extraction
         eeg_feat = eeg_branch(eeg, return_sequence=True)
         stim_feat = stim_branch(freq, phase)
         temp_feat = temp_branch(eeg, label)
 
+        # Dual Attention Forward
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
 
+        # Loss Calculation
         loss = ce_criterion(logits, label) + dual_attn.loss_entropy
         loss.backward()
         optimizer.step()
@@ -129,7 +132,7 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
     total_loss = 0.0
     all_preds, all_labels = [], []
 
-    # 후보군 텐서 (Pattern Matching용)
+    # Candidate Tensors for Pattern Matching
     c_freqs = torch.tensor(cand_freqs, dtype=torch.float32).to(device)
     c_phases = torch.tensor(cand_phases, dtype=torch.float32).to(device)
     c_indices = torch.arange(n_classes).to(device)
@@ -188,11 +191,11 @@ def main(args):
     for subj in subjects:
         print(f"\n[Subject {subj}] Loading Data...")
 
-        # 1. Load Data (All Blocks)
-        # stride=0.5 -> Data Augmentation Effect
         dataset = TorchBETADataset([subj], args.beta_data_root, args.pick_channels)
 
-        if len(dataset) == 0: continue
+        if len(dataset) == 0:
+            print(f"[Warning] No data found for Subject {subj}. Skipping...")
+            continue
 
         n_channels = dataset.C
         n_samples = dataset.T
@@ -203,16 +206,16 @@ def main(args):
         cand_freqs = dataset.stim_info['freqs']
         cand_phases = dataset.stim_info['phases']
 
-        # Block IDs (BETA usually has 4 blocks: 0, 1, 2, 3)
+        # Get unique Block IDs (BETA usually has 4 blocks: 0, 1, 2, 3)
         block_ids = np.unique(dataset.blocks)
 
         subj_accs, subj_itrs = [], []
 
-        # 2. Block-wise CV Loop
+        # Block-wise Cross-Validation Loop
         for fold, test_block in enumerate(block_ids):
             print(f"\n  --- Subject {subj:02d} | Fold {fold + 1}/{len(block_ids)} (Test Block {test_block}) ---")
 
-            # Index Splitting
+            # Split indices by block
             indices = np.arange(len(dataset))
             train_idx = indices[dataset.blocks != test_block]
             test_idx = indices[dataset.blocks == test_block]
@@ -242,7 +245,7 @@ def main(args):
                                       num_heads=4,
                                       proj_dim=n_classes).to(device)
 
-            # 첫 번째 Subject의 첫 번째 Fold에서만 모델 사이즈 출력
+            # Print model size only for the first subject and first fold
             if subj == subjects[0] and test_block == block_ids[0]:
                 print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
 
@@ -275,7 +278,7 @@ def main(args):
                       f"Test Loss: {test_loss:.5f} | Test Acc: {test_acc:.5f} | "
                       f"ITR: {itr:.4f} bits/min")
 
-                # update best record
+                # Update best record
                 if test_acc > best_acc:
                     best_acc = test_acc
                     best_itr = itr
@@ -309,7 +312,7 @@ def main(args):
         all_accs.append(mean_acc)
         all_itrs.append(mean_itr)
 
-    print(f"\n========== FINAL RESULT (Subjects: {len(subjects)}) ==========")
+    print(f"\n========== FINAL RESULT ==========")
     print(f"Mean Acc: {np.mean(all_accs):.5} ± {np.std(all_accs):.5f}")
     print(f"Mean ITR: {np.mean(all_itrs):.4f} ± {np.std(all_itrs):.4f}")
 
