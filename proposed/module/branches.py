@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from EEGNet import EEGNet
-from DTN import DTN
+from eegnet import EEGNet
+from dtn import DTN
 from stimulus import StimulusEncoder
 
 
@@ -14,7 +14,7 @@ class EEGBranch(nn.Module):
     Input : (B, 1, C, T)
     Output:
       - return_sequence=False: (B, D_flat = C*W)
-      - return_sequence=True : (B, N=W, D=C)  ← DualAttention 용
+      - return_sequence=True : (B, N=W, D=C)  ← DualAttention
     """
     def __init__(self, chans, samples):
         super().__init__()
@@ -35,9 +35,6 @@ class StimulusBranch(nn.Module):
     """
     def __init__(self, T, sfreq=250.0, hidden_dim=128, n_harmonics=3):
         super().__init__()
-        # freqs_tensor = torch.tensor(freqs, dtype=torch.float32)
-        # self.register_buffer("freqs", freqs_tensor)
-
         self.T = T
         self.sfreq = sfreq
         self.n_harmonics = n_harmonics
@@ -55,11 +52,10 @@ class StimulusBranch(nn.Module):
             feat: (B, D_stim)
         """
         if freqs.ndim == 1:
-            freqs = freqs.unsqueeze(1)  # (B, 1)
+            freqs = freqs.unsqueeze(1)
 
         B = freqs.size(0)
-        t = self.t.unsqueeze(0)  # (1, T)
-
+        t = self.t.unsqueeze(0)
 
         harmonics = []
         for h in range(1, self.n_harmonics + 1):
@@ -68,8 +64,8 @@ class StimulusBranch(nn.Module):
             harmonics.append(sin_h)
             harmonics.append(cos_h)
 
-        stim_harm = torch.stack(harmonics, dim=-1)   # (B, T, 2*n_harmonics)
-        feat = self.encoder(stim_harm)               # (B, hidden_dim)
+        stim_harm = torch.stack(harmonics, dim=-1)        # (B, T, 2*n_harmonics)
+        feat = self.encoder(stim_harm)                    # (B, hidden_dim)
         return feat
 
 
@@ -79,11 +75,14 @@ class StimulusBranchWithPhase(nn.Module):
     Input : labels (B,), phases (B,)
     Output: (B, D_stim)
     """
-    def __init__(self, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=64):
+    def __init__(self, T, sfreq=250.0, hidden_dim=64, n_harmonics=3, out_dim=None):
         super().__init__()
         self.T = T
         self.sfreq = float(sfreq)
         self.n_harmonics = n_harmonics
+
+        if out_dim is None:
+            out_dim = hidden_dim
 
         # Stimulus encoder
         self.encoder = StimulusEncoder(in_dim=2 * n_harmonics, hidden_dim=hidden_dim)
@@ -131,7 +130,7 @@ class TemplateBranch(nn.Module):
     """
     Template branch using DTN.
     Input : (B, 1, C, T), labels (B,)
-    Output : (B, D_temp) latent representation of the TEMPLATE
+    Output : (B, D_temp) latent representation of the template
     """
     def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
         super().__init__()
@@ -144,12 +143,9 @@ class TemplateBranch(nn.Module):
 
     def forward(self, x, y=None, inference=False):
         """
-        x: EEG input (템플릿 업데이트용)
-        y: Class index (가져올 템플릿의 인덱스)
+        x: EEG input (Update template)
+        y: Class index (Template index)
         """
-        # DTN을 통해 'y' 클래스의 템플릿 특징을 가져옴
         feat = self.network(x, y)
-
-        # Projection
         feat = self.proj(feat)
         return feat

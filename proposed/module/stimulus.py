@@ -5,23 +5,11 @@ import math
 
 
 def generate_stimulus_signal(freq, T, sfreq):
-    """
-    stim 생성이 nominal_freq가 아니라 corrected_freq 기반으로 동작하도록 만듦
-
-    Args:
-        freq (Tensor): (B,) corrected frequency (nominal + Δf)
-        T (int): signal length (time samples)
-        sfreq (float): sampling rate
-
-    Returns:
-        Tensor: (B, T, 2) → sin/cos reference
-    """
     B = freq.size(0)
     t = torch.linspace(0, T / sfreq, T, device=freq.device).unsqueeze(0)  # (1, T)
 
     freq = freq.unsqueeze(1)  # (B, 1)
 
-    # sin/cos reference
     stim_sin = torch.sin(2 * math.pi * freq * t)  # (B, T)
     stim_cos = torch.cos(2 * math.pi * freq * t)
 
@@ -31,18 +19,7 @@ def generate_stimulus_signal(freq, T, sfreq):
 
 
 class StimulusEncoder(nn.Module):
-    """
-    Stimulus Encoder
-    - Encodes sinusoidal reference signals (sin, cos, harmonics) into latent features.
-    - Input: (B, T, 2*n_harmonics)
-    - Output: (B, D) → flattened latent representation
-    """
     def __init__(self, in_dim=2, hidden_dim=64):
-        """
-        Args:
-            in_dim (int): input dimension, usually 2 (sin, cos) or 2*n_harmonics
-            hidden_dim (int): output embedding dimension (D)
-        """
         super().__init__()
         self.hidden_dim = hidden_dim
 
@@ -56,13 +33,6 @@ class StimulusEncoder(nn.Module):
         )
 
     def forward(self, stim):
-        """
-        Args:
-            stim (Tensor): (B, T, in_dim) sinusoidal stimulus signals
-
-        Returns:
-            Tensor: (B, hidden_dim) latent representation
-        """
         stim = stim.permute(0, 2, 1)    # (B, T, 2) -> (B, 2, T)
         feat = self.encoder(stim)       # (B, hidden_dim, 1)
         feat = feat.squeeze(-1)         # (B, hidden_dim)

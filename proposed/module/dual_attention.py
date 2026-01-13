@@ -96,7 +96,7 @@ class DualAttention(nn.Module):
 
         # Attention output
         attn_out = torch.einsum("bhqk,bkhd->bqhd", attn_weights, V)
-        attn_out = attn_out.contiguous().view(B, attn_out.size(1), -1)  # (B,2,D)
+        attn_out = attn_out.contiguous().view(B, attn_out.size(1), -1)      # (B, 2, D)
 
         # Pool stim+temp attended outputs
         pooled = attn_out.mean(dim=1)

@@ -14,7 +14,6 @@ from moabb.datasets import Lee2019_SSVEP
 from SSVEPAnalysisToolbox.datasets.betadataset import BETADataset
 
 
-# ===== 필터링 함수 정의 =====
 def butter_bandpass(lowcut, highcut, fs, order=5):
     nyq = 0.5 * fs
     low = lowcut / nyq
@@ -23,7 +22,7 @@ def butter_bandpass(lowcut, highcut, fs, order=5):
     return b, a
 
 def butter_bandpass_filter(data, lowcut, highcut, fs, order=5):
-    # data shape: (Channel, Time) -> 시간 축(axis=-1)에 대해 필터 적용
+    # data shape: (Channel, Time)
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     y = lfilter(b, a, data, axis=-1)
     return y
@@ -117,10 +116,9 @@ class Nakanishi2015Dataset(Dataset):
         dataset = Nakanishi2015()
         dataset.subject_list = list(range(1, 11))
 
-        # [설정] 논문에 따른 Latency 고려 구간 추출
         # Latency: 135ms (0.135s), Stim Duration: 4s
         # Interval: [0.135, 4.135]
-        # Filter: 6-80Hz (논문 기준)
+        # Filter: 6-80Hz
         paradigm = SSVEP(fmin=6, fmax=80, tmin=0.135, tmax=4.135)
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
@@ -153,9 +151,9 @@ class Nakanishi2015Dataset(Dataset):
         return self.N
 
     def __getitem__(self, idx):
-        eeg_np = self.epochs[idx]  # (C, T)
+        eeg_np = self.epochs[idx]                                       # (C, T)
         label = int(self.labels[idx])
-        eeg = torch.tensor(eeg_np, dtype=torch.float32).unsqueeze(0)  # (1, C, T)
+        eeg = torch.tensor(eeg_np, dtype=torch.float32).unsqueeze(0)    # (1, C, T)
         return eeg, label
 
 
@@ -231,16 +229,12 @@ class Lee2019Dataset_LOSO(Dataset):
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
-        # 피험자 필드 추가
         subj_ids = np.array(meta['subject'])
-
-        # 대상 피험자만 선택
         subj_mask = np.isin(subj_ids, subjects)
         X = X[subj_mask]
         labels = labels[subj_mask]
         self.subjects = subj_ids[subj_mask]
 
-        # 라벨 인코딩
         le = LabelEncoder()
         encoded_labels = le.fit_transform(labels)
         self.labels = torch.tensor(encoded_labels, dtype=torch.long)
@@ -281,7 +275,7 @@ class Lee2019Dataset_LOSO(Dataset):
     def __getitem__(self, idx):
         eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)
         label = int(self.labels[idx])
-        subj = int(self.subjects[idx])  # 피험자 ID와 함께 반환
+        subj = int(self.subjects[idx])
         return eeg, label, subj
 
 
@@ -291,12 +285,10 @@ class TorchBETADataset(Dataset):
         self.subjects = subjects
         self.samples = []
 
-        # 메타 정보 로드
         stim_freqs = self.bs.stim_info["freqs"]
         stim_phases = self.bs.stim_info["phases"]
         self.sfreq = self.bs.srate
 
-        # 채널 선택 로직
         self.original_channels = self.bs.channels
         if pick_channels == "all":
             self.picks = list(range(len(self.original_channels)))
@@ -314,36 +306,29 @@ class TorchBETADataset(Dataset):
                 if target in available_chs_upper:
                     self.picks.append(available_chs_upper.index(target))
 
-            if len(self.picks) == 0:
-                print(f"  [Warning] 요청한 채널 {pick_channels}을 찾을 수 없습니다. 전체 채널을 사용합니다.")
-                self.picks = list(range(len(self.original_channels)))
-
-        # 윈도우 설정
         if time_window:
             self.win_pts = int(time_window * self.sfreq)
             self.stride_pts = int((stride if stride else time_window) * self.sfreq)
         else:
             self.win_pts = None
 
-        # --- [전처리] Cue/Rest 제거 및 필터링 ---
         # BETA: Cue 0.5s + Stim (2s or 3s) + Rest 0.5s
         cut_front_sec = 0.5
         cut_back_sec = 0.5
 
-        cut_front_pts = int(cut_front_sec * self.sfreq)  # 0.5 * 250 = 125 sample
-        cut_back_pts = int(cut_back_sec * self.sfreq)  # 125 sample
+        cut_front_pts = int(cut_front_sec * self.sfreq)     # 0.5 * 250 = 125 sample
+        cut_back_pts = int(cut_back_sec * self.sfreq)       # 125 sample
 
         for s in subjects:
             sub_idx = s - 1
-            data = self.bs.get_sub_data(sub_idx)  # (Block, Class, Ch, Time)
-            B, K, C, T_total = data.shape  # T_total: 1000 (4s) or 750 (3s)
+            data = self.bs.get_sub_data(sub_idx)    # (Block, Class, Ch, Time)
+            B, K, C, T_total = data.shape           # T_total: 1000 (4s) or 750 (3s)
 
             for b in range(B):
                 for k in range(K):
                     raw_sig = data[b, k, self.picks, :]
 
-                    # 1. Slicing (앞뒤 0.5s 제거 -> 순수 자극만 남김)
-                    # S1~15: 2s 남음, S16~70: 3s 남음
+                    # 1. Slicing (S1~15: 2s, S16~70: 3s)
                     raw_sig = raw_sig[:, cut_front_pts: T_total - cut_back_pts]
 
                     # 2. Voltage Scaling (Volt -> uV)
@@ -395,13 +380,11 @@ class Wang2016Dataset(Dataset):
         self.data_root = data_root
         self.subjects = subjects
 
-        # --- 1. Meta Information Generation (Paper Standard) ---
         # Frequency: 8Hz ~ 15.8Hz (0.2Hz step), 40 targets
         self.n_classes = 40
         self.freqs = np.arange(8.0, 15.8 + 0.01, 0.2)
 
         # Phase: 0, 0.5pi, 1.0pi ... (0.5pi step)
-        # 논문의 JFPM 방식: 0.5pi difference between adjacent frequencies
         self.phases = (np.arange(40) * 0.5 * np.pi) % (2 * np.pi)
 
         # Standard Channel Names (64 ch)
@@ -417,12 +400,10 @@ class Wang2016Dataset(Dataset):
 
         self.sfreq = 250.0  # Downsampled rate
 
-        # --- 2. Load & Process Data ---
         all_epochs = []
         all_labels = []
 
-        # --- [전처리] Slicing Indices ---
-        # Readme: 6s epoch (-0.5s pre, +5.5s post). Stim onset at 0.5s (index 125).
+        # 6s epoch (-0.5s pre, +5.5s post). Stim onset at 0.5s (index 125).
         # Stim duration: 5s.
         # Target: Pure Stimulation [0.0s, 5.0s] relative to onset.
         # Indices in array: 125 (0.5s) to 1375 (5.5s) -> Total 1250 samples (5s)
@@ -451,7 +432,7 @@ class Wang2016Dataset(Dataset):
             # Order: Block 0 (Target 0..39), Block 1 (Target 0..39)...
             data = data.reshape(-1, 64, 1500)
 
-            # 1. Slicing (Pure Stim)
+            # Slicing (Pure Stim)
             data = data[..., start_idx:end_idx]
 
             # Create Labels: 0~39 repeated 6 times
@@ -468,11 +449,9 @@ class Wang2016Dataset(Dataset):
         self.epochs = np.concatenate(all_epochs, axis=0)  # (N_total, 64, 1500)
         self.labels = np.concatenate(all_labels, axis=0)
 
-        # --- 3. Preprocessing ---
         # Bandpass Filter (3-70Hz) - crucial for removing drift and noise
         self.epochs = butter_bandpass_filter(self.epochs, 3.0, 70.0, self.sfreq, order=4)
 
-        # --- 4. Channel Selection ---
         info = mne.create_info(ch_names=self.ch_names, sfreq=self.sfreq, ch_types='eeg')
         epochs_mne = mne.EpochsArray(self.epochs, info, verbose=False)
 
