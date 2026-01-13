@@ -9,26 +9,25 @@ SSVEPy/
 │   │
 │   ├── module/
 │   │   ├── DTN.py                                          # Dynamic Template Network
-│   │   ├── EEGNet.py                                       # EEGNet 기반 EEG feature encoder
-│   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder 정의 및 결합
-│   │   ├── data_loader.py                                  # EEG 데이터셋 로더
+│   │   ├── EEGNet.py                                       # EEG feature encoder
+│   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder
+│   │   ├── data_loader.py                                  # Data Loader
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
-│   │   └── stimulus.py                                     # StimulusEncoder
+│   │   ├── stimulus.py                                     # StimulusEncoder
+│   │   └── preprocess_AR_occi.py                           # AR dataset raw EEG → npz (Occipital channels)
 │   │
 │   ├── train/
-│   │   ├── train_ar.py                                     # AR dataset — session split
-│   │   ├── train_lee.py                                    # Lee2019 dataset — session split
-│   │   ├── loso_ar.py                                      # AR dataset — LOSO
-│   │   ├── loso_beta.py                                    # BETA dataset — LOSO
+│   │   ├── kfold_beta.py                                   # BETA dataset — KFold CV on 4 blocks
+│   │   ├── kfold_wang.py                                   # Wang2016 dataset — KFold CV on 6 blocks
 │   │   ├── loso_lee.py                                     # Lee2019 dataset — LOSO
-│   │   └── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
+│   │   ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
+│   │   ├── train_ar.py                                     # AR dataset — session split
+│   │   └── train_lee.py                                    # Lee2019 dataset — session split
 │   │
-│   ├── results/
-│   │   └── ...                                             # ...
-│   │
-│   └── preprocess/
-│       ├── preprocess_AR.py                                # AR dataset raw EEG → .npz 변환 (전체 채널)
-│       └── preprocess_AR_occi.py                           # AR dataset raw EEG → .npz 변환 (후두부 채널만)
+│   └── results/
+│       ├── ...                                             # ...
+│       └── ...                                             # ...
+│
 │ 
 ├── model/
 │   ├── FBCCA.py
