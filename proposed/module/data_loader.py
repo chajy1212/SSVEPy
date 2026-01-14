@@ -116,10 +116,7 @@ class Nakanishi2015Dataset(Dataset):
         dataset = Nakanishi2015()
         dataset.subject_list = list(range(1, 11))
 
-        # Latency: 135ms (0.135s), Stim Duration: 4s
-        # Interval: [0.135, 4.135]
-        # Filter: 6-80Hz
-        paradigm = SSVEP(fmin=6, fmax=80, tmin=0.135, tmax=4.135)
+        paradigm = SSVEP(fmin=6, fmax=80, tmin=0.0, tmax=4.16)
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
@@ -145,7 +142,7 @@ class Nakanishi2015Dataset(Dataset):
         self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
 
-        print(f"  -> [Nakanishi] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.135s-4.135s]")
+        print(f"  -> [Nakanishi] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.0s-4.16s]")
 
     def __len__(self):
         return self.N
@@ -160,7 +157,7 @@ class Nakanishi2015Dataset(Dataset):
 class Lee2019Dataset(Dataset):
     def __init__(self, subjects=[1], train=True, pick_channels="all"):
         super().__init__()
-        paradigm = SSVEP(fmin=3, fmax=60, tmin=0, tmax=4.0)
+        paradigm = SSVEP(fmin=3, fmax=60, tmin=0.0, tmax=4.0)
         dataset = Lee2019_SSVEP()
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
@@ -206,7 +203,7 @@ class Lee2019Dataset(Dataset):
         # Average reference
         raw.set_eeg_reference('average', projection=False)
 
-        self.epochs = raw.get_data().astype(np.float32)  # (N,C,T)
+        self.epochs = raw.get_data().astype(np.float32)  # (N, C, T)
         self.N, self.C, self.T = self.epochs.shape
         self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
@@ -216,7 +213,7 @@ class Lee2019Dataset(Dataset):
         return self.N
 
     def __getitem__(self, idx):
-        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1,C,T)
+        eeg = torch.tensor(self.epochs[idx], dtype=torch.float32).unsqueeze(0)  # (1, C, T)
         label = int(self.labels[idx])
         return eeg, label
 
@@ -328,18 +325,18 @@ class TorchBETADataset(Dataset):
                 for k in range(K):
                     raw_sig = data[b, k, self.picks, :]
 
-                    # 1. Slicing (S1~15: 2s, S16~70: 3s)
+                    # Slicing (S1~15: 2s, S16~70: 3s)
                     raw_sig = raw_sig[:, cut_front_pts: T_total - cut_back_pts]
 
-                    # 2. Voltage Scaling (Volt -> uV)
+                    # Voltage Scaling (Volt -> uV)
                     raw_sig = raw_sig * 1e6
 
-                    # 3. Filter (3-60Hz)
+                    # Filter (3-60Hz)
                     raw_sig = butter_bandpass_filter(raw_sig, 3.0, 60.0, self.sfreq, order=4)
 
                     current_len = raw_sig.shape[-1]
 
-                    # 4. Windowing
+                    # Windowing
                     if self.win_pts is not None and self.win_pts <= current_len:
                         start = 0
                         while start + self.win_pts <= current_len:
@@ -364,7 +361,7 @@ class TorchBETADataset(Dataset):
             self.C, self.T = 0, 0
         self.blocks = np.array([s[4] for s in self.samples])
 
-        print(f"  -> [BETA] Subjects {subjects} | Preprocessed (Cut 0.5s, 3-60Hz)")
+        print(f"  -> [BETA] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.0s-3.00s]")
 
     def __len__(self):
         return len(self.samples)
@@ -470,7 +467,7 @@ class Wang2016Dataset(Dataset):
         self.N, self.C, self.T = self.epochs.shape
         self.labels = torch.tensor(self.labels, dtype=torch.long)
 
-        print(f"  -> [Wang2016] Loaded Subjects {subjects} | Shape: {self.epochs.shape}")
+        print(f"  -> [Wang2016] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.5s-5.5s]")
 
     def __len__(self):
         return self.N

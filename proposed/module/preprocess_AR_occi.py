@@ -9,26 +9,35 @@ from pathlib import Path
 
 
 def load_raw(set_file: Path, fs: int):
-    """ Load EEGLAB dataset (.set) and return MNE Raw object. """
+    """
+    Load EEGLAB dataset (.set/.fdt) and return an MNE Raw object.
+
+    Args:
+        set_file (Path): Path to the .set file.
+        fs (int): Default sampling frequency if not found in metadata.
+
+    Returns:
+        mne.io.RawArray: Loaded raw EEG data.
+    """
     fdt_file = set_file.with_suffix(".fdt")
     ch_file  = set_file.with_name(set_file.name.replace("_eeg.set", "_channels.tsv"))
     json_file= set_file.with_name(set_file.name.replace("_eeg.set", "_eeg.json"))
 
-    # channel names
+    # Load Channel Names
     ch_df = pd.read_csv(ch_file, sep="\t")
     ch_names = ch_df["name"].tolist()
     n_ch = len(ch_names)
 
-    # sampling rate
+    # Get Sampling Rate
     meta = json.loads(Path(json_file).read_text())
     sfreq = float(meta.get("SamplingFrequency", fs))
 
-    # load data
+    # Load Binary Data (.fdt)
     data = np.fromfile(fdt_file, dtype=np.float32)
     n_times = data.size // n_ch
-    data = data.reshape((n_ch, n_times), order="F")
+    data = data.reshape((n_ch, n_times), order="F")     # Fortran-like order for EEGLAB
 
-    # create Raw object
+    # Create MNE Raw Object
     info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
     raw = mne.io.RawArray(data, info, verbose=False)
 
@@ -36,12 +45,15 @@ def load_raw(set_file: Path, fs: int):
 
 
 def safe_float(x):
-    """Convert string/number safely to float. Handles fractions like '10 / 8'."""
+    """
+    Convert string/number safely to float.
+    Handles complex formats like fractions (e.g., '10 / 8').
+    """
     try:
         return float(x)
     except Exception:
         expr = str(x).strip()
-        # fraction style "a / b"
+        # Handle fraction style "a / b"
         if "/" in expr:
             parts = expr.split("/")
             if len(parts) == 2:
@@ -51,27 +63,28 @@ def safe_float(x):
                         return num / den
                 except Exception:
                     pass
-        # fallback: extract first number
+        # Fallback: extract the first numeric sequence
         m = re.findall(r"[-+]?\d*\.\d+|\d+", expr)
         return float(m[0]) if m else 0.0
 
 
 def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, pick_channels=None):
     """
-    Convert EEG dataset into compressed .npz files.
-    This version is matched exactly to the AR-SSVEP paper preprocessing:
-    - Notch 49–51 Hz
-    - Band-pass 5–95 Hz
-    - Epoch window: [-0.5, 3.14] sec → 3.64 sec
-    - Frequency-phase paired class labeling
+    Convert AR-SSVEP EEG dataset into compressed .npz files.
+
+    Preprocessing steps (Paper Standards):
+    1. Notch Filter: 49–51 Hz (Target 50Hz)
+    2. Band-pass Filter: 5–95 Hz
+    3. Epoch Window: [-0.5, 3.14] sec (Total 3.64 sec)
+    4. Labeling: Unique mapping of (Frequency, Phase) pairs to Class IDs
     """
     base_dir = Path(base_dir)
     save_dir = Path(save_dir)
 
-    # epoch range
+    # Epoch Parameters
     tmin = -0.5
     tmax = 3.14
-    T = tmax - tmin   # = 3.64 sec
+    T = tmax - tmin   # 3.64 sec
     n_samples = int(T * fs)
 
     subjects = sorted(base_dir.glob("sub-*"))
@@ -100,13 +113,10 @@ def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, pick_channels=Non
                         picks = [ch for ch in pick_channels if ch in raw.ch_names]
                         raw.pick(picks)
 
-                    # === Preprocessing (논문 100% 동일) ===
                     raw.notch_filter(freqs=[50], notch_widths=2, verbose=False)
                     raw.filter(l_freq=5, h_freq=95, fir_design="firwin", verbose=False)
 
-                    # ---------------------------------------
-                    # Event loading
-                    # ---------------------------------------
+                    # Load Events
                     events_df = pd.read_csv(evt_file, sep="\t")
 
                     freqs = [safe_float(f) for f in events_df["stim_frequency"].values]
@@ -115,25 +125,21 @@ def convert_dataset_to_npz(base_dir, save_dir, tasks, fs=1024, pick_channels=Non
 
                     onsets = events_df["onset"].values
 
-                    # onset → sample
+                    # Convert onset to samples (Handle seconds vs samples logic)
                     if np.median(onsets) < 100:
                         onsets = (onsets * fs).astype(int)
                     else:
                         onsets = onsets.astype(int)
 
-                    # ---------------------------------------
-                    # Frequency-phase unique class mapping
-                    # ---------------------------------------
+                    # Class Mapping (Unique Frequency-Phase Pairs)
                     freq_phase_pairs = list(zip(freqs, phases))
                     unique_pairs = {pair: idx for idx, pair in enumerate(sorted(set(freq_phase_pairs)))}
 
                     labels = [unique_pairs[pair] for pair in freq_phase_pairs]
 
-                    # ---------------------------------------
-                    # Epoching (논문 기준: onset - 0.5)
-                    # ---------------------------------------
+                    # Epoching
                     for onset, lab, f, p in zip(onsets, labels, freqs, phases):
-                        start = onset + int(tmin * fs)     # onset - 0.5 sec
+                        start = onset + int(tmin * fs)
                         stop = start + n_samples
 
                         if start >= 0 and stop <= raw.n_times:

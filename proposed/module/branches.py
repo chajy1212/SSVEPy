@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from eegnet import EEGNet
-from dtn import DTN
+from EEGNet import EEGNet
+from DTN import DTN
 from stimulus import StimulusEncoder
 
 
