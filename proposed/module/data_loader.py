@@ -116,8 +116,7 @@ class Nakanishi2015Dataset(Dataset):
         dataset = Nakanishi2015()
         dataset.subject_list = list(range(1, 11))
 
-        paradigm = SSVEP(fmin=6, fmax=80, tmin=0.0, tmax=4.16)
-
+        paradigm = SSVEP()
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
 
         # Label encoding
@@ -131,6 +130,7 @@ class Nakanishi2015Dataset(Dataset):
         # Build MNE object
         info = mne.create_info(ch_names=ch_names, sfreq=256.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
+        raw.filter(l_freq=6, h_freq=80, fir_design="firwin", verbose=False)
 
         # Pick channels if requested
         if pick_channels != "all":
@@ -142,7 +142,7 @@ class Nakanishi2015Dataset(Dataset):
         self.n_classes = len(np.unique(self.labels))
         self.ch_names = raw.info["ch_names"]
 
-        print(f"  -> [Nakanishi] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.0s-4.16s]")
+        print(f"  -> [Nakanishi] Loaded Subjects {subjects} | Shape: {self.epochs.shape}")
 
     def __len__(self):
         return self.N
@@ -157,7 +157,7 @@ class Nakanishi2015Dataset(Dataset):
 class Lee2019Dataset(Dataset):
     def __init__(self, subjects=[1], train=True, pick_channels="all"):
         super().__init__()
-        paradigm = SSVEP(fmin=3, fmax=60, tmin=0.0, tmax=4.0)
+        paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
@@ -193,6 +193,7 @@ class Lee2019Dataset(Dataset):
 
         info = mne.create_info(ch_names=ch_names, sfreq=1000.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
+        raw.filter(l_freq=3, h_freq=60, fir_design="firwin", verbose=False)
 
         if pick_channels != "all":
             raw.pick(pick_channels)
@@ -221,7 +222,7 @@ class Lee2019Dataset(Dataset):
 class Lee2019Dataset_LOSO(Dataset):
     def __init__(self, subjects=[1], pick_channels="all"):
         super().__init__()
-        paradigm = SSVEP(fmin=3, fmax=60, tmin=0, tmax=4.0)
+        paradigm = SSVEP()
         dataset = Lee2019_SSVEP()
 
         X, labels, meta = paradigm.get_data(dataset=dataset, subjects=subjects)
@@ -253,6 +254,7 @@ class Lee2019Dataset_LOSO(Dataset):
         ch_names = [mapping_lee2019.get(f"ch{i + 1}", f"ch{i + 1}") for i in range(X.shape[1])]
         info = mne.create_info(ch_names=ch_names, sfreq=1000.0, ch_types="eeg")
         raw = mne.EpochsArray(X.astype(np.float32), info)
+        raw.filter(l_freq=3, h_freq=60, fir_design="firwin", verbose=False)
 
         if pick_channels != "all":
             raw.pick(pick_channels)
@@ -361,7 +363,7 @@ class TorchBETADataset(Dataset):
             self.C, self.T = 0, 0
         self.blocks = np.array([s[4] for s in self.samples])
 
-        print(f"  -> [BETA] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.0s-3.00s]")
+        print(f"  -> [BETA] Loaded Subjects {subjects} | Shape: {self.epochs.shape}")
 
     def __len__(self):
         return len(self.samples)
@@ -467,7 +469,7 @@ class Wang2016Dataset(Dataset):
         self.N, self.C, self.T = self.epochs.shape
         self.labels = torch.tensor(self.labels, dtype=torch.long)
 
-        print(f"  -> [Wang2016] Loaded Subjects {subjects} | Shape: {self.epochs.shape} | [0.5s-5.5s]")
+        print(f"  -> [Wang2016] Loaded Subjects {subjects} | Shape: {self.epochs.shape}")
 
     def __len__(self):
         return self.N
