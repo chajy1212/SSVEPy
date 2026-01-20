@@ -277,7 +277,7 @@ class Lee2019Dataset_LOSO(Dataset):
         subj = int(self.subjects[idx])
         return eeg, label, subj
 
-
+"""
 class TorchBETADataset(Dataset):
     def __init__(self, subjects, data_root, pick_channels="all", time_window=None, stride=None):
         self.bs = BETADataset(path=data_root)
@@ -305,29 +305,33 @@ class TorchBETADataset(Dataset):
                 if target in available_chs_upper:
                     self.picks.append(available_chs_upper.index(target))
 
+        # Window Parameter
         if time_window:
             self.win_pts = int(time_window * self.sfreq)
             self.stride_pts = int((stride if stride else time_window) * self.sfreq)
         else:
             self.win_pts = None
 
-        # BETA: Cue 0.5s + Stim (2s or 3s) + Rest 0.5s
+        # Slicing: Cue 0.5s, Rest 0.5s
         cut_front_sec = 0.5
+        # cut_front_sec = 0.5 + 0.13    # Latency 0.13s
+
         cut_back_sec = 0.5
 
-        cut_front_pts = int(cut_front_sec * self.sfreq)     # 0.5 * 250 = 125 sample
-        cut_back_pts = int(cut_back_sec * self.sfreq)       # 125 sample
+        cut_front_pts = int(cut_front_sec * self.sfreq)
+        cut_back_pts = int(cut_back_sec * self.sfreq)
 
         for s in subjects:
             sub_idx = s - 1
             data = self.bs.get_sub_data(sub_idx)    # (Block, Class, Ch, Time)
-            B, K, C, T_total = data.shape           # T_total: 1000 (4s) or 750 (3s)
+            B, K, C, T_total = data.shape
 
             for b in range(B):
                 for k in range(K):
                     raw_sig = data[b, k, self.picks, :]
 
-                    # Slicing (S1~15: 2s, S16~70: 3s)
+                    # S1~15: 2s (or 1.87s if latency used)
+                    # S16~70: 3s (or 2.87s if latency used)
                     raw_sig = raw_sig[:, cut_front_pts: T_total - cut_back_pts]
 
                     # Voltage Scaling (Volt -> uV)
@@ -356,14 +360,151 @@ class TorchBETADataset(Dataset):
 
         self.n_classes = len(stim_freqs)
         self.stim_info = {'freqs': stim_freqs, 'phases': stim_phases}
+
         if len(self.samples) > 0:
             self.C = self.samples[0][0].shape[0]
             self.T = self.samples[0][0].shape[1]
         else:
             self.C, self.T = 0, 0
+
         self.blocks = np.array([s[4] for s in self.samples])
 
-        print(f"  -> [BETA] Loaded Subjects {subjects} | Shape: {self.epochs.shape}")
+        print(f"  -> [BETA] Loaded Subjects {subjects} | Samples: {len(self.samples)} | Cut: {cut_front_sec}s-{cut_back_sec}s")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sig, lbl, freq, phase, block = self.samples[idx]
+        eeg = torch.tensor(sig, dtype=torch.float32).unsqueeze(0)
+        return eeg, int(lbl), float(freq), float(phase), int(block)
+"""
+
+
+class TorchBETADataset(Dataset):
+    def __init__(self, subjects, data_root, pick_channels="all", time_window=None, stride=None):
+        self.data_root = data_root
+        self.subjects = subjects
+        self.samples = []
+        self.sfreq = 250.0
+
+        # Channel (64)
+        self.original_channels = [
+            'FP1', 'FPZ', 'FP2', 'AF3', 'AF4', 'F7', 'F5', 'F3', 'F1', 'FZ', 'F2', 'F4', 'F6',
+            'F8', 'FT7', 'FC5', 'FC3', 'FC1', 'FCZ', 'FC2', 'FC4', 'FC6', 'FT8', 'T7', 'C5',
+            'C3', 'C1', 'CZ', 'C2', 'C4', 'C6', 'T8', 'M1', 'TP7', 'CP5', 'CP3', 'CP1', 'CPZ',
+            'CP2', 'CP4', 'CP6', 'TP8', 'M2', 'P7', 'P5', 'P3', 'P1', 'PZ', 'P2', 'P4', 'P6',
+            'P8', 'PO7', 'PO5', 'PO3', 'POZ', 'PO4', 'PO6', 'PO8', 'CB1', 'O1', 'OZ', 'O2', 'CB2'
+        ]
+
+        # Frequency
+        self.stim_freqs = [
+            8.6, 8.8, 9, 9.2, 9.4, 9.6, 9.8, 10, 10.2, 10.4, 10.6, 10.8,
+            11, 11.2, 11.4, 11.6, 11.8, 12, 12.2, 12.4, 12.6, 12.8,
+            13, 13.2, 13.4, 13.6, 13.8, 14, 14.2, 14.4, 14.6, 14.8,
+            15, 15.2, 15.4, 15.6, 15.8, 8, 8.2, 8.4
+        ]
+
+        # Phase (pi)
+        _phases_pi = [
+            1.5, 0, 0.5, 1, 1.5, 0, 0.5, 1, 1.5, 0, 0.5, 1,
+            1.5, 0, 0.5, 1, 1.5, 0, 0.5, 1, 1.5, 0,
+            0.5, 1, 1.5, 0, 0.5, 1, 1.5, 0, 0.5, 1,
+            1.5, 0, 0.5, 1, 1.5, 0, 0.5, 1
+        ]
+        self.stim_phases = [p * np.pi for p in _phases_pi]
+
+        if pick_channels == "all":
+            self.picks = list(range(len(self.original_channels)))
+        else:
+            if isinstance(pick_channels, str):
+                target_chs = [ch.strip() for ch in pick_channels.split(',')]
+            else:
+                target_chs = pick_channels
+
+            available_chs_upper = [ch.upper() for ch in self.original_channels]
+            target_chs_upper = [ch.upper() for ch in target_chs]
+
+            self.picks = []
+            for target in target_chs_upper:
+                if target in available_chs_upper:
+                    self.picks.append(available_chs_upper.index(target))
+
+        if time_window:
+            self.win_pts = int(time_window * self.sfreq)
+            self.stride_pts = int((stride if stride else time_window) * self.sfreq)
+        else:
+            self.win_pts = None
+
+        # Slicing: Cue 0.5s, Rest 0.5s
+        cut_front_sec = 0.5
+        # cut_front_sec = 0.5 + 0.13  # Latency 0.13s
+
+        cut_back_sec = 0.5
+
+        cut_front_pts = int(cut_front_sec * self.sfreq)
+        cut_back_pts = int(cut_back_sec * self.sfreq)
+
+        for s in subjects:
+            file_path = os.path.join(self.data_root, f"S{s}.mat")
+
+            try:
+                mat = sio.loadmat(file_path)
+                # mat['data'] -> struct -> 'EEG' field
+                # (Ch, Time, Block, Class) = (64 x Time x 4 x 40)
+                raw_data = mat['data'][0, 0]['EEG']
+            except Exception as e:
+                print(f"[Error] {file_path} 로드 실패: {e}")
+                continue
+
+            # (Ch, Time, Block, Class) -> (Block, Class, Ch, Time)
+            data = np.transpose(raw_data, (2, 3, 0, 1))
+
+            B, K, C, T_total = data.shape
+
+            for b in range(B):
+                for k in range(K):
+                    raw_sig = data[b, k, self.picks, :]
+
+                    # Slicing
+                    raw_sig = raw_sig[:, cut_front_pts: T_total - cut_back_pts]
+
+                    # Scaling (Volt -> uV)
+                    raw_sig = raw_sig * 1e6
+
+                    # Filter (3-60Hz)
+                    raw_sig = butter_bandpass_filter(raw_sig, 3.0, 60.0, self.sfreq, order=4)
+
+                    current_len = raw_sig.shape[-1]
+
+                    # Windowing
+                    if self.win_pts is not None and self.win_pts <= current_len:
+                        start = 0
+                        while start + self.win_pts <= current_len:
+                            crop_sig = raw_sig[:, start: start + self.win_pts]
+                            self.samples.append((
+                                crop_sig.astype(np.float32),
+                                k, self.stim_freqs[k], self.stim_phases[k], b
+                            ))
+                            start += self.stride_pts
+                    else:
+                        self.samples.append((
+                            raw_sig.astype(np.float32),
+                            k, self.stim_freqs[k], self.stim_phases[k], b
+                        ))
+
+        self.n_classes = len(self.stim_freqs)
+        self.stim_info = {'freqs': self.stim_freqs, 'phases': self.stim_phases}
+
+        if len(self.samples) > 0:
+            self.C = self.samples[0][0].shape[0]
+            self.T = self.samples[0][0].shape[1]
+        else:
+            self.C, self.T = 0, 0
+
+        self.blocks = np.array([s[4] for s in self.samples])
+
+        print(f"  -> [BETA] Loaded Subjects {subjects} (Local) | Samples: {len(self.samples)} | Cut: {cut_front_sec}s-{cut_back_sec}s")
 
     def __len__(self):
         return len(self.samples)
