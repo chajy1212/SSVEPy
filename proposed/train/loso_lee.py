@@ -202,10 +202,11 @@ def main(args):
     all_accs, all_itrs = [], []
 
     subjects = parse_subjects(args.subjects, "Lee2019")
+
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
-
+        
         train_dataset = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
