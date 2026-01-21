@@ -136,9 +136,9 @@ def main(args):
 
     # Load Dataset
     # LOSO:
-    # test_dataset = Lee2019Dataset_LOSO(subjects=[target_subj], pick_channels=args.pick_channels)
+    test_dataset = Lee2019Dataset_LOSO(subjects=[target_subj], pick_channels=args.pick_channels)
     # Session Split:
-    test_dataset = Lee2019Dataset(subjects=[target_subj], pick_channels=args.pick_channels)
+    # test_dataset = Lee2019Dataset(subjects=[target_subj], pick_channels=args.pick_channels)
 
     n_channels = test_dataset.C
     n_samples = test_dataset.T
@@ -176,7 +176,11 @@ def main(args):
 
     # UMAP
     print("[INFO] Running UMAP dimensionality reduction...")
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, n_components=2, random_state=42)
+    reducer = umap.UMAP(n_neighbors=20,
+                        min_dist=0.1,
+                        n_components=2,
+                        random_state=42,
+                        metric='cosine')
     embedding = reducer.fit_transform(features)
 
     # Plot Results
@@ -185,7 +189,8 @@ def main(args):
 
     # Create DataFrame for Seaborn
     df = pd.DataFrame(embedding, columns=['UMAP1', 'UMAP2'])
-    df['Class'] = labels
+    df['Class'] = labels.astype(str)
+    df.sort_values(by='Class', inplace=True)
 
     # Scatter Plot
     sns.scatterplot(
@@ -194,19 +199,31 @@ def main(args):
         y='UMAP2',
         hue='Class',
         palette='viridis',
-        s=60,
+        s=80,
         alpha=0.8,
-        legend='full'
+        edgecolor='white',
+        linewidth=0.5
     )
 
-    plt.title(f'UMAP Visualization of Learned Features (Subject {target_subj})', fontsize=16)
+    plt.title(f'Learned Feature Space (Subject {target_subj})', fontsize=16, pad=15)
     plt.xlabel('UMAP Dimension 1', fontsize=12)
     plt.ylabel('UMAP Dimension 2', fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.5)
 
-    save_file = f"UMAP_Subject{target_subj}.eps"
-    plt.savefig(save_file, dpi=300, bbox_inches='tight')
-    print(f"[Done] Plot saved to {save_file}")
+    plt.legend(
+        title='Class',
+        loc='best',
+        frameon=True,
+        fontsize=12,
+        title_fontsize=13,
+    )
+
+    plt.tight_layout()
+
+    save_dir = "/home/brainlab/Workspace/jycha/SSVEP/result"
+    save_path = os.path.join(save_dir, f"UMAP_Subject{target_subj}.eps")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"[Done] Plot saved to {save_path}")
 
     plt.show()
     plt.close()
@@ -215,7 +232,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # Suggestion: For LOSO models use subject 43, for Session-Split models use subject 31 as default examples
-    parser.add_argument("--target_subject", type=int, default=31, help="Subject ID to visualize")
+    parser.add_argument("--target_subject", type=int, default=43, help="Subject ID to visualize")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()

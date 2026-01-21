@@ -242,8 +242,8 @@ def main(args):
 
     # Print Final Results
     print(f"\n\n========== FINAL LOSO Time Window Analysis (Avg over {len(subjects)} subjects) ==========")
-    print(f"{'Time (s)':<10} | {'Mean Acc (%)':<20} | {'Mean ITR (bits/min)':<20}")
-    print("-" * 60)
+    print(f"{'Time (s)':<10} | {'Mean Acc (%)':<25} | {'Mean ITR (bits/min)':<25}")
+    print("-" * 70)
 
     for tw in sorted(final_time_analysis.keys()):
         accs = final_time_analysis[tw]['acc']
@@ -252,11 +252,13 @@ def main(args):
         if len(accs) > 0:
             mean_acc = np.mean(accs) * 100
             std_acc = np.std(accs) * 100
-            mean_itr = np.mean(itrs)
 
-            print(f"{tw:<10.1f} | {mean_acc:.2f} ± {std_acc:.2f}{'':<8} | {mean_itr:.2f}")
+            mean_itr = np.mean(itrs)
+            std_itr = np.std(itrs)
+
+            print(f"{tw:<10.1f} | {mean_acc:.2f} ± {std_acc:.2f}{'':<8} | {mean_itr:.2f} ± {std_itr:.2f}")
         else:
-            print(f"{tw:<10.1f} | N/A {'':<16} | N/A")
+            print(f"{tw:<10.1f} | N/A {'':<21} | N/A")
 
 
 if __name__ == '__main__':
