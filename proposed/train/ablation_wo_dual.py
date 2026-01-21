@@ -230,7 +230,7 @@ def main(args):
         n_classes = train_dataset.n_classes
         sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
+        freqs = list(getattr(train_dataset, "freqs"))
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")

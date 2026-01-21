@@ -206,7 +206,7 @@ def main(args):
     for test_subj in subjects:
         print(f"\n--- LOSO Test Subject: {test_subj} ---")
         train_subjs = [s for s in subjects if s != test_subj]
-        
+
         train_dataset = Lee2019Dataset_LOSO(subjects=train_subjs, pick_channels=args.pick_channels)
         test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
@@ -215,7 +215,7 @@ def main(args):
         n_classes = train_dataset.n_classes
         sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
+        freqs = list(getattr(train_dataset, "freqs"))
 
         print(f"[INFO] Dataset: Lee2019")
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")

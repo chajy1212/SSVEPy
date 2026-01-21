@@ -232,7 +232,7 @@ def main(args):
         n_classes = train_dataset.n_classes
         sfreq = train_dataset.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(getattr(train_dataset, "freqs", np.linspace(8, 15, n_classes)))
+        freqs = list(getattr(train_dataset, "freqs"))
 
         print(f"[INFO] Train/Test samples: {len(train_dataset)}/{len(test_dataset)}")
         print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time}s")
