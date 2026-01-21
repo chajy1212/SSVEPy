@@ -69,7 +69,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
                           dataloader, device, n_classes, sfreq, dataset_freqs,
                           time_windows=[0.5, 1.0, 2.0, 3.0, 4.0]):
     """
-    LOSO 모델 평가: 저장된 모델을 사용하여 다양한 시간 길이(Slicing)에 대해 정확도와 ITR을 측정
+    LOSO Model Evaluation: Measures Accuracy and ITR for various time window lengths using the saved model.
     """
     eeg_branch.eval()
     stim_branch.eval()
@@ -84,7 +84,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
     else:
         candidate_freqs = dataset_freqs.to(device)
 
-    # 데이터 길이 확인을 위해 배치 하나 가져오기 (LOSO 데이터로더는 3개 반환: eeg, label, subj)
+    # Check data length using a dummy batch
     dummy_eeg, _, _ = next(iter(dataloader))
     max_pts = dummy_eeg.shape[-1]
 
@@ -93,6 +93,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
     for tw in time_windows:
         crop_pts = int(tw * sfreq)
 
+        # Skip if window is longer than available data
         if crop_pts > max_pts:
             print(f"  [Skip] Window {tw}s is longer than data")
             continue
@@ -103,13 +104,15 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
             eeg, label = eeg.to(device), label.to(device)
             B = eeg.size(0)
 
-            # [Slicing] 데이터 뒷부분 자르기
+            # Slicing: Crop data to the current time window
             eeg_cropped = eeg[..., :crop_pts]
 
-            # 모델 Forward
+            # Model Forward
             eeg_feat = eeg_branch(eeg_cropped, return_sequence=True)
 
             batch_scores = []
+
+            # Pattern Matching Loop
             for cls_idx, freq_val in zip(candidate_indices, candidate_freqs):
                 freq_batch = freq_val.view(1).expand(B)
                 stim_feat = stim_branch(freq_batch)
@@ -151,13 +154,12 @@ def main(args):
 
     subjects = parse_subjects(args.subjects, "Lee2019")
 
-    # 전체 결과 저장용 딕셔너리
+    # Dictionary to store aggregated results
     final_time_analysis = {tw: {'acc': [], 'itr': []} for tw in [0.5, 1.0, 2.0, 3.0, 4.0]}
 
     for test_subj in subjects:
         print(f"\n========== [LOSO Evaluation: Test Subject {test_subj:02d}] ==========")
 
-        # 모델 파일 경로 확인
         model_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
         model_path = os.path.join(model_dir, f"LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
@@ -165,7 +167,7 @@ def main(args):
             print(f"[Warning] Model file not found: {model_path}. Skipping...")
             continue
 
-        # Test Dataset만 로드 (학습용은 필요 없음)
+        # Load Test Dataset
         test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = test_dataset.C
@@ -199,20 +201,20 @@ def main(args):
                                   num_heads=4,
                                   proj_dim=n_classes).to(device)
 
-        # 저장된 가중치 로드
+        # Load Saved Weights
         print(f"[Info] Loading LOSO model from {model_path}...")
         try:
-            # weights_only=False 필수 (Numpy 호환)
+            # weights_only=False is required for certain numpy/scalar types in older PyTorch versions
             checkpoint = torch.load(model_path, weights_only=False)
 
-            # 저장 키 확인 (optimizer 등이 같이 저장된 구조인지)
+            # Check dictionary structure (handle nested vs flat structures)
             if "model_state" in checkpoint:
                 state = checkpoint["model_state"]
                 eeg_branch.load_state_dict(state["eeg"])
                 stim_branch.load_state_dict(state["stim"])
                 temp_branch.load_state_dict(state["temp"])
                 dual_attn.load_state_dict(state["attn"])
-            elif "eeg_branch" in checkpoint:  # loso_lee.py 저장 방식
+            elif "eeg_branch" in checkpoint:
                 eeg_branch.load_state_dict(checkpoint["eeg_branch"])
                 stim_branch.load_state_dict(checkpoint["stim_branch"])
                 temp_branch.load_state_dict(checkpoint["temp_branch"])
@@ -225,20 +227,20 @@ def main(args):
             print(f"[Error] Failed to load model: {e}")
             continue
 
-        # 시간대별 성능 평가 실행
+        # Execute Time Window Evaluation
         time_results = evaluate_time_windows(
             eeg_branch, stim_branch, temp_branch, dual_attn,
             test_loader, device, n_classes, sfreq, freqs,
             time_windows=[0.5, 1.0, 2.0, 3.0, 4.0]
         )
 
-        # 결과 누적
+        # Aggregate Results
         for tw, metrics in time_results.items():
             if tw in final_time_analysis:
                 final_time_analysis[tw]['acc'].append(metrics['acc'])
                 final_time_analysis[tw]['itr'].append(metrics['itr'])
 
-    # 최종 결과 출력
+    # Print Final Results
     print(f"\n\n========== FINAL LOSO Time Window Analysis (Avg over {len(subjects)} subjects) ==========")
     print(f"{'Time (s)':<10} | {'Mean Acc (%)':<20} | {'Mean ITR (bits/min)':<20}")
     print("-" * 60)
