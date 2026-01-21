@@ -225,7 +225,11 @@ def main(args):
         n_classes = train_set.n_classes
         sfreq = train_set.sfreq
         trial_time = n_samples / sfreq
-        freqs = list(train_set.freqs)
+
+        if n_classes == 12:
+            freqs = [9.25, 11.25, 13.25, 9.75, 11.75, 13.75, 10.25, 12.25, 14.25, 10.75, 12.75, 14.75]
+        else:
+            freqs = list(train_set.freqs)
 
         print(f"[INFO] Dataset: Nakanishi2015")
         print(f"[INFO] Subjects used ({len(subjects)}): {subjects}")

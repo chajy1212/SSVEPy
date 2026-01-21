@@ -8,26 +8,29 @@ SSVEPy/
 ├── proposed/
 │   │
 │   ├── module/
-│   │   ├── DTN.py                                          # Dynamic Template Network
-│   │   ├── EEGNet.py                                       # EEG feature encoder
 │   │   ├── branches.py                                     # EEG / Stimulus / Template branch Encoder
 │   │   ├── data_loader.py                                  # Data Loader
+│   │   ├── dtn.py                                          # Dynamic Template Network
 │   │   ├── dual_attention.py                               # Dual Attention — EEG ↔ Stimulus/Template
-│   │   ├── stimulus.py                                     # StimulusEncoder
-│   │   └── preprocess_AR_occi.py                           # AR dataset raw EEG → npz (Occipital channels)
+│   │   ├── eegnet.py                                       # EEG feature encoder
+│   │   ├── stimulus.py                                     # Stimulus feature encoder
+│   │   └── stimulus_auto_corrector.py                      # Stimulus Auto Corrector
 │   │
-│   ├── train/
-│   │   ├── kfold_beta.py                                   # BETA dataset — KFold CV on 4 blocks
-│   │   ├── kfold_wang.py                                   # Wang2016 dataset — KFold CV on 6 blocks
-│   │   ├── loso_lee.py                                     # Lee2019 dataset — LOSO
-│   │   ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
-│   │   ├── train_ar.py                                     # AR dataset — session split
-│   │   └── train_lee.py                                    # Lee2019 dataset — session split
+│   ├── results/
+│   │   ├── time_window.py                                  # Evaluates performance across different time windows (Session split)
+│   │   ├── time_window_loso.py                             # Evaluates performance across different time windows (LOSO)
+│   │   ├── visualize_time_window.py                        # Plots Accuracy and ITR trends over varying signal lengths
+│   │   └── visualize_umap.py                               # Visualizes latent feature distributions using UMAP
 │   │
-│   └── results/
-│       ├── ...                                             # ...
-│       └── ...                                             # ...
-│
+│   └── train/
+│       ├── ablation_stimulus_auto_corrector.py             # Lee2019 dataset — Ablation Study add Stimulus Auto Corrector (Session split)
+│       ├── ablation_stimulus_auto_corrector_loso.py        # Lee2019 dataset — Ablation Study add Stimulus Auto Corrector (LOSO)
+│       ├── ablation_wo_dual.py                             # Lee2019 dataset — Ablation Study w/o Dual Branch
+│       ├── ablation_wo_stim.py                             # Lee2019 dataset — Ablation Study w/o Stimulus Branch
+│       ├── ablation_wo_temp.py                             # Lee2019 dataset — Ablation Study w/o Template Branch
+│       ├── loso_lee.py                                     # Lee2019 dataset — LOSO
+│       ├── loso_nakanishi.py                               # Nakanishi2015 dataset — LOSO
+│       └── train_lee.py                                    # Lee2019 dataset — Session split
 │ 
 ├── model/
 │   ├── FBCCA.py
