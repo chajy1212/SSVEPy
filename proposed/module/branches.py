@@ -104,11 +104,11 @@ class StimulusBranchWithPhase(nn.Module):
 
 
 class TemplateBranch(nn.Module):
-    def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64):
+    def __init__(self, n_bands, n_features, n_channels, n_samples, n_classes, D_temp=64, momentum=0.1):
         super().__init__()
         self.network = DTN(n_bands=n_bands, n_features=n_features,
                            n_channels=n_channels, n_samples=n_samples,
-                           n_classes=n_classes)
+                           n_classes=n_classes, momentum=momentum)
 
         # Projection: (B, n_features) → (B, D_temp)
         self.proj = nn.Linear(n_features, D_temp)
