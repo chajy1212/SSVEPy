@@ -17,10 +17,13 @@ SSVEPy/
 │   │   └── stimulus_auto_corrector.py                          # Stimulus Auto Corrector
 │   │
 │   ├── results/
-│   │   ├── time_window.py                                      # Evaluates performance across different time windows (Session split)
-│   │   ├── time_window_loso.py                                 # Evaluates performance across different time windows (LOSO)
-│   │   ├── visualize_time_window.py                            # Plots Accuracy and ITR trends over varying signal lengths
-│   │   └── visualize_umap.py                                   # Visualizes latent feature distributions using UMAP
+│   │   ├── time_window.py                                      # Lee2019 dataset — Evaluates performance across different time windows (Session split)
+│   │   ├── time_window_loso.py                                 # Lee2019 dataset — Evaluates performance across different time windows (LOSO)
+│   │   ├── time_window_nakanishi.py                            # Nakankshi2015 dataset — Evaluates performance across different time windows (LOSO)
+│   │   ├── visualize_time_window.py                            # Lee2019 dataset — Plots Accuracy and ITR trends over varying signal lengths
+│   │   ├── visualize_time_window_nakanishi.py                  # Nakankshi2015 dataset — Plots Accuracy and ITR trends over varying signal lengths
+│   │   ├── visualize_umap.py                                   # Lee2019 dataset — Visualizes latent feature distributions using UMAP
+│   │   └── visualize_umap_nakanishi.py                         # Nakankshi2015 dataset — Visualizes latent feature distributions using UMAP
 │   │
 │   └── train/
 │       ├── ablation_stimulus_auto_corrector.py                 # Lee2019 dataset — Ablation Study add Stimulus Auto Corrector (Session split)
