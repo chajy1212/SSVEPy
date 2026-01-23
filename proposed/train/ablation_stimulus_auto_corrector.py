@@ -249,7 +249,8 @@ def main(args):
                                      n_channels=n_channels,
                                      n_samples=n_samples,
                                      n_classes=n_classes,
-                                     D_temp=args.d_query).to(device)
+                                     D_temp=args.d_query,
+                                     momentum=0.1).to(device)
         dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
                                   d_query=args.d_query,
                                   d_model=args.d_model,

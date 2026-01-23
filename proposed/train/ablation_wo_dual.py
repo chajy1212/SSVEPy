@@ -244,7 +244,7 @@ def main(args):
         eeg_branch = EEGBranch(chans=n_channels, samples=n_samples).to(device)
         stim_branch = StimulusBranch(T=n_samples, sfreq=sfreq, hidden_dim=args.d_query, n_harmonics=3).to(device)
         temp_branch = TemplateBranch(n_bands=8, n_features=32, n_channels=n_channels, n_samples=n_samples,
-                                     n_classes=n_classes, D_temp=args.d_query).to(device)
+                                     n_classes=n_classes, D_temp=args.d_query, momentum=0.1).to(device)
 
         # Use 4D dummy input to resolve dimension issues (Batch, 1, Channels, Time)
         dummy_input = torch.zeros(1, 1, n_channels, n_samples).to(device)

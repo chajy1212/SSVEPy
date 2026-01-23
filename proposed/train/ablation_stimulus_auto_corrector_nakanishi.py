@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from dual_attention import DualAttention
 from data_loader import Nakanishi2015Dataset
 from branches import EEGBranch, StimulusBranch, TemplateBranch
+from stimulus_auto_corrector import StimulusAutoCorrector
 
 
 # ===== Reproducibility =====
@@ -66,16 +67,13 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 
 # ===== Train / Eval =====
-def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
-                    dataloader, optimizer, ce_criterion, device, dataset_freqs):
-    """
-    Trains the model for one epoch.
-    Converts Label (Index) -> Frequency (Hz) using dataset_freqs.
-    """
+def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
+                    dataloader, optimizer, ce_criterion, device, dataset_freqs, args):
     eeg_branch.train()
     stim_branch.train()
     temp_branch.train()
     dual_attn.train()
+    corrector.train()
 
     all_preds, all_labels = [], []
     total_loss = 0.0
@@ -91,22 +89,19 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         optimizer.zero_grad()
 
-        # EEG Feature Extraction
+        nominal_freqs = freqs_tensor[label]
+        current_freqs, delta_f = corrector(eeg, nominal_freqs)
+
         eeg_feat = eeg_branch(eeg, return_sequence=True)
-
-        # Stimulus Branch: Convert Label Index to Frequency (Hz)
-        current_freqs = freqs_tensor[label]
-
         stim_feat = stim_branch(current_freqs)
-
-        # Template Branch: Input true label for template update
         temp_feat = temp_branch(eeg, label)
 
-        # Dual Attention forward
         logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
+        cls_loss = ce_criterion(logits, label)
 
-        # CE loss
-        loss = ce_criterion(logits, label)
+        ssl_loss = corrector.compute_ssl_loss(eeg_feat, stim_feat)
+        loss = cls_loss + (args.lambda_ssl * ssl_loss)
+
         loss.backward()
         optimizer.step()
 
@@ -127,22 +122,19 @@ def train_one_epoch(eeg_branch, stim_branch, temp_branch, dual_attn,
 
 
 @torch.no_grad()
-def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
+def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
              dataloader, ce_criterion, device, n_classes, trial_time, dataset_freqs):
-    """
-    Evaluates the model using Pattern Matching.
-    Iterates through all candidate frequencies/templates to find the best match.
-    """
     eeg_branch.eval()
     stim_branch.eval()
     temp_branch.eval()
     dual_attn.eval()
+    corrector.eval()
 
     all_preds, all_labels = [], []
     total_loss = 0.0
+    total_samples = 0
 
     candidate_indices = torch.arange(n_classes).to(device)
-    total_samples = 0
 
     # Prepare candidate frequency tensor
     if not isinstance(dataset_freqs, torch.Tensor):
@@ -164,7 +156,8 @@ def evaluate(eeg_branch, stim_branch, temp_branch, dual_attn,
         for cls_idx, freq_val in zip(candidate_indices, candidate_freqs):
             # (A) Stimulus: Input candidate frequency (Hz)
             freq_batch = freq_val.view(1).expand(B)
-            stim_feat = stim_branch(freq_batch)
+            corrected_f_batch, _ = corrector(eeg, freq_batch)
+            stim_feat = stim_branch(corrected_f_batch)
 
             # (B) Template: Input candidate class index
             cls_batch = cls_idx.view(1).expand(B)
@@ -256,11 +249,14 @@ def main(args):
                                   d_model=args.d_model,
                                   num_heads=4,
                                   proj_dim=n_classes).to(device)
+        corrector = StimulusAutoCorrector(eeg_channels=n_channels,
+                                          hidden_dim=64).to(device)
 
-        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn)
+        print_total_model_size(eeg_branch, stim_branch, temp_branch, dual_attn, corrector)
 
         params = list(eeg_branch.parameters()) + list(stim_branch.parameters()) + \
-                 list(temp_branch.parameters()) + list(dual_attn.parameters())
+                 list(temp_branch.parameters()) + list(dual_attn.parameters()) + \
+                 list(corrector.parameters())
 
         optimizer = optim.Adam(params, lr=args.lr, weight_decay=args.weight_decay)
         ce_criterion = nn.CrossEntropyLoss()
@@ -270,12 +266,12 @@ def main(args):
 
         for epoch in range(1, args.epochs + 1):
             train_loss, train_acc = train_one_epoch(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
+                eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
                 train_loader, optimizer, ce_criterion, device,
-                dataset_freqs=freqs
+                dataset_freqs=freqs, args=args
             )
             test_loss, test_acc, itr = evaluate(
-                eeg_branch, stim_branch, temp_branch, dual_attn,
+                eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
                 test_loader, ce_criterion, device,
                 n_classes=n_classes, trial_time=trial_time,
                 dataset_freqs=freqs
@@ -294,7 +290,7 @@ def main(args):
                 best_epoch = epoch
 
                 save_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-                save_path = os.path.join(save_dir, f"LOSONakanishi2015_sub{test_subj}_EEGNet_{ch_tag}.pth")
+                save_path = os.path.join(save_dir, f"LOSOStimAutoCorrNakanishi2015_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
                 torch.save({
                     "epoch": best_epoch,
@@ -305,6 +301,7 @@ def main(args):
                     "temp_branch": temp_branch.state_dict(),
                     "dual_attn": dual_attn.state_dict(),
                     "optimizer": optimizer.state_dict(),
+                    "corrector": corrector.state_dict()
                 }, save_path)
 
                 print(f"\n[Save] Epoch {best_epoch} → Best model "
@@ -327,6 +324,7 @@ if __name__ == '__main__':
     parser.add_argument("--d_query", type=int, default=16)
     parser.add_argument("--d_model", type=int, default=32)
     parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--lambda_ssl", type=float, default=0.1, help="Weight for SSL Cosine Similarity Loss")
     parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
