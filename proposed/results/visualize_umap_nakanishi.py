@@ -10,7 +10,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from data_loader import Lee2019Dataset_LOSO, Lee2019Dataset
+from data_loader import Nakanishi2015Dataset
 from branches import EEGBranch
 
 
@@ -47,8 +47,8 @@ def compute_itr(acc, n_classes, trial_time, eps=1e-12):
 # ===== Subject parser =====
 def parse_subjects(subjects_arg, dataset_name=""):
     if subjects_arg.lower() == "all":
-        if dataset_name == "Lee2019":
-            subjects = list(range(1, 55))  # 1 ~ 54
+        if dataset_name == "Nakanishi2015":
+            subjects = list(range(1, 11))  # 1 ~ 10
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -121,24 +121,14 @@ def main(args):
 
     # Path to saved model weights
     model_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-    model_path = os.path.join(model_dir, f"LOSOStimAutoCorrLee2019_sub{target_subj}_EEGNet_{ch_tag}.pth")
+    model_path = os.path.join(model_dir, f"LOSOStimAutoCorrNakanishi2015_sub{target_subj}_EEGNet_{ch_tag}.pth")
 
     # Check model existence and fallback logic
     if not os.path.exists(model_path):
         print(f"[Error] Model not found: {model_path}")
-        model_name_alt = f"StimAutoCorrLee2019_Sub{target_subj}_EEGNet_{ch_tag}.pth"
-        model_path_alt = os.path.join(model_dir, model_name_alt)
-        if os.path.exists(model_path_alt):
-            model_path = model_path_alt
-            print(f"[INFO] Found alternative model: {model_path}")
-        else:
-            return
 
     # Load Dataset
-    # LOSO:
-    test_dataset = Lee2019Dataset_LOSO(subjects=[target_subj], pick_channels=args.pick_channels)
-    # Session Split:
-    # test_dataset = Lee2019Dataset(subjects=[target_subj], pick_channels=args.pick_channels)
+    test_dataset = Nakanishi2015Dataset(subjects=[target_subj], pick_channels=args.pick_channels)
 
     n_channels = test_dataset.C
     n_samples = test_dataset.T
@@ -146,7 +136,7 @@ def main(args):
     sfreq = test_dataset.sfreq
     trial_time = n_samples / sfreq
 
-    print(f"[INFO] Dataset: Lee2019")
+    print(f"[INFO] Dataset: Nakanishi2015")
     print(f"[INFO] Test samples: {len(test_dataset)}")
     print(f"[INFO] Channels used ({n_channels}): {', '.join(args.pick_channels)}")
     print(f"[INFO] Input shape: (C={n_channels}, T={n_samples}), Classes={n_classes}, Trial={trial_time}s")
@@ -189,7 +179,20 @@ def main(args):
 
     # Create DataFrame for Seaborn
     df = pd.DataFrame(embedding, columns=['UMAP1', 'UMAP2'])
-    df['Class'] = labels.astype(str)
+
+    # Nakanishi frequencies (approx) for better legend labels
+    freq_map = {
+        0: '9.25', 1: '9.75', 2: '10.25', 3: '10.75',
+        4: '11.25', 5: '11.75', 6: '12.25', 7: '12.75',
+        8: '13.25', 9: '13.75', 10: '14.25', 11: '14.75'
+    }
+
+    try:
+        df['Class'] = [freq_map[l] for l in labels]
+    except:
+        df['Class'] = labels.astype(str)
+
+    # Sort for legend consistency
     df.sort_values(by='Class', inplace=True)
 
     # Scatter Plot
@@ -212,16 +215,18 @@ def main(args):
 
     plt.legend(
         title='Class',
+        bbox_to_anchor=(1.02, 1),
         loc='best',
+        borderaxespad=0,
         frameon=True,
-        fontsize=12,
-        title_fontsize=13,
+        fontsize=10,
+        title_fontsize=11,
     )
 
     plt.tight_layout()
 
     save_dir = "/home/brainlab/Workspace/jycha/SSVEP/result"
-    save_path = os.path.join(save_dir, f"UMAP_Lee_Subject{target_subj}.eps")
+    save_path = os.path.join(save_dir, f"UMAP_Nakanishi_Subject{target_subj}.eps")
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"[Done] Plot saved to {save_path}")
 
@@ -231,10 +236,10 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    # Suggestion: For LOSO models use subject 43, for Session-Split models use subject 31 as default examples
-    parser.add_argument("--target_subject", type=int, default=43, help="Subject ID to visualize")
+    # Suggestion: For Nakanishi2015 LOSO models use subject ?? as default examples
+    parser.add_argument("--target_subject", type=int, default=1, help="Subject ID to visualize")
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO7,PO8,POz,O1,O2,Oz")
     args = parser.parse_args()
 
     if isinstance(args.pick_channels, str):

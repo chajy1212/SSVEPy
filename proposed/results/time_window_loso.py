@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 from data_loader import Lee2019Dataset_LOSO
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
+from stimulus_auto_corrector import StimulusAutoCorrector
 
 
 # ===== Reproducibility =====
@@ -65,7 +66,7 @@ def parse_subjects(subjects_arg, dataset_name=""):
 
 # ===== Time Window Evaluation Function =====
 @torch.no_grad()
-def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
+def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
                           dataloader, device, n_classes, sfreq, dataset_freqs,
                           time_windows=[0.5, 1.0, 2.0, 3.0, 4.0]):
     """
@@ -75,6 +76,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
     stim_branch.eval()
     temp_branch.eval()
     dual_attn.eval()
+    corrector.eval()
 
     results = {}
     candidate_indices = torch.arange(n_classes).to(device)
@@ -100,7 +102,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
 
         all_preds, all_labels = [], []
 
-        for eeg, label, _ in dataloader:  # LOSO 데이터로더는 (eeg, label, subj) 반환
+        for eeg, label, _ in dataloader:
             eeg, label = eeg.to(device), label.to(device)
             B = eeg.size(0)
 
@@ -115,7 +117,9 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn,
             # Pattern Matching Loop
             for cls_idx, freq_val in zip(candidate_indices, candidate_freqs):
                 freq_batch = freq_val.view(1).expand(B)
-                stim_feat = stim_branch(freq_batch)
+
+                corrected_freq, _ = corrector(eeg_cropped, freq_batch)
+                stim_feat = stim_branch(corrected_freq)
 
                 cls_batch = cls_idx.view(1).expand(B)
                 temp_feat = temp_branch(eeg_cropped, cls_batch)
@@ -161,7 +165,7 @@ def main(args):
         print(f"\n========== [LOSO Evaluation: Test Subject {test_subj:02d}] ==========")
 
         model_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-        model_path = os.path.join(model_dir, f"LOSOLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
+        model_path = os.path.join(model_dir, f"LOSOStimAutoCorrLee2019_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
         if not os.path.exists(model_path):
             print(f"[Warning] Model file not found: {model_path}. Skipping...")
@@ -194,31 +198,39 @@ def main(args):
                                      n_channels=n_channels,
                                      n_samples=n_samples,
                                      n_classes=n_classes,
-                                     D_temp=args.d_query).to(device)
+                                     D_temp=args.d_query,
+                                     momentum=0.1).to(device)
         dual_attn = DualAttention(d_eeg=eeg_branch.feature_dim,
                                   d_query=args.d_query,
                                   d_model=args.d_model,
                                   num_heads=4,
                                   proj_dim=n_classes).to(device)
+        corrector = StimulusAutoCorrector(eeg_channels=n_channels,
+                                          hidden_dim=64).to(device)
 
         # Load Saved Weights
         print(f"[Info] Loading LOSO model from {model_path}...")
         try:
-            # weights_only=False is required for certain numpy/scalar types in older PyTorch versions
             checkpoint = torch.load(model_path, weights_only=False)
 
-            # Check dictionary structure (handle nested vs flat structures)
+            # Check dictionary structure
             if "model_state" in checkpoint:
                 state = checkpoint["model_state"]
                 eeg_branch.load_state_dict(state["eeg"])
                 stim_branch.load_state_dict(state["stim"])
                 temp_branch.load_state_dict(state["temp"])
                 dual_attn.load_state_dict(state["attn"])
-            elif "eeg_branch" in checkpoint:
+                if "corr" in state:
+                    corrector.load_state_dict(state["corr"])
+                elif "corrector" in state:
+                    corrector.load_state_dict(state["corrector"])
+            else:
                 eeg_branch.load_state_dict(checkpoint["eeg_branch"])
                 stim_branch.load_state_dict(checkpoint["stim_branch"])
                 temp_branch.load_state_dict(checkpoint["temp_branch"])
                 dual_attn.load_state_dict(checkpoint["dual_attn"])
+                if "corrector" in checkpoint:
+                    corrector.load_state_dict(checkpoint["corrector"])
 
             best_acc_log = checkpoint.get("best_acc", 0.0)
             print(f"[Info] Model loaded successfully (Train Best Acc: {best_acc_log:.4f})")
@@ -229,7 +241,7 @@ def main(args):
 
         # Execute Time Window Evaluation
         time_results = evaluate_time_windows(
-            eeg_branch, stim_branch, temp_branch, dual_attn,
+            eeg_branch, stim_branch, temp_branch, dual_attn, corrector,
             test_loader, device, n_classes, sfreq, freqs,
             time_windows=[0.5, 1.0, 2.0, 3.0, 4.0]
         )

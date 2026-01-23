@@ -4,9 +4,10 @@ import torch
 import random
 import argparse
 import numpy as np
+from sympy.physics.units import momentum
 from torch.utils.data import DataLoader
 
-from data_loader import Lee2019Dataset
+from data_loader import Lee2019Dataset_LOSO
 from dual_attention import DualAttention
 from branches import EEGBranch, StimulusBranch, TemplateBranch
 from stimulus_auto_corrector import StimulusAutoCorrector
@@ -45,8 +46,8 @@ def compute_itr(acc, n_classes, trial_time, eps=1e-12):
 # ===== Subject parser =====
 def parse_subjects(subjects_arg, dataset_name=""):
     if subjects_arg.lower() == "all":
-        if dataset_name == "Lee2019":
-            subjects = list(range(1, 55))  # 1 ~ 54
+        if dataset_name == "Nakanishi2015":
+            subjects = list(range(1, 11))  # 1 ~ 10
         else:
             raise ValueError(f"Unsupported dataset: {dataset_name}")
         return subjects
@@ -70,8 +71,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn, corre
                           dataloader, device, n_classes, sfreq, dataset_freqs,
                           time_windows=[0.5, 1.0, 2.0, 3.0, 4.0]):
     """
-    Evaluates the trained model on various time window lengths (slicing)
-    to measure Accuracy and ITR for each duration.
+    LOSO Model Evaluation: Measures Accuracy and ITR for various time window lengths using the saved model.
     """
     eeg_branch.eval()
     stim_branch.eval()
@@ -82,36 +82,35 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn, corre
     results = {}
     candidate_indices = torch.arange(n_classes).to(device)
 
-    # Prepare candidate frequencies
     if not isinstance(dataset_freqs, torch.Tensor):
         candidate_freqs = torch.tensor(dataset_freqs, dtype=torch.float32).to(device)
     else:
         candidate_freqs = dataset_freqs.to(device)
 
-    # Check max length of dataset (using a dummy batch)
-    dummy_eeg, _ = next(iter(dataloader))
+    # Check data length using a dummy batch
+    dummy_eeg, _, _ = next(iter(dataloader))
     max_pts = dummy_eeg.shape[-1]
 
-    print("\n  --- Time Window Analysis (Inference Only) ---")
+    print("\n  --- Time Window Analysis (LOSO Inference) ---")
 
     for tw in time_windows:
         crop_pts = int(tw * sfreq)
 
-        # Skip if the window is longer than the actual data
+        # Skip if window is longer than available data
         if crop_pts > max_pts:
-            print(f"  [Skip] Window {tw}s is longer than data ({max_pts / sfreq}s)")
+            print(f"  [Skip] Window {tw}s is longer than data")
             continue
 
         all_preds, all_labels = [], []
 
-        for eeg, label in dataloader:
+        for eeg, label, _ in dataloader:
             eeg, label = eeg.to(device), label.to(device)
             B = eeg.size(0)
 
-            # Slicing: Crop the data to the target time window (0 ~ crop_pts)
+            # Slicing: Crop data to the current time window
             eeg_cropped = eeg[..., :crop_pts]
 
-            # Model Forward: EEGBranch/EEGNet must handle variable sequence lengths via Global Pooling/Attention
+            # Model Forward
             eeg_feat = eeg_branch(eeg_cropped, return_sequence=True)
 
             batch_scores = []
@@ -124,7 +123,7 @@ def evaluate_time_windows(eeg_branch, stim_branch, temp_branch, dual_attn, corre
                 stim_feat = stim_branch(corrected_freq)
 
                 cls_batch = cls_idx.view(1).expand(B)
-                temp_feat = temp_branch(eeg_cropped, cls_batch)     # TemplateBranch must also handle the cropped input length
+                temp_feat = temp_branch(eeg_cropped, cls_batch)
 
                 logits, _, _, _ = dual_attn(eeg_feat, stim_feat, temp_feat)
                 batch_scores.append(logits[:, cls_idx].unsqueeze(1))
@@ -163,19 +162,18 @@ def main(args):
     # Dictionary to store aggregated results
     final_time_analysis = {tw: {'acc': [], 'itr': []} for tw in [0.5, 1.0, 2.0, 3.0, 4.0]}
 
-    for subj in subjects:
-        print(f"\n========== [Session-Split Evaluation: Subject {subj:02d}] ==========")
+    for test_subj in subjects:
+        print(f"\n========== [LOSO Evaluation: Test Subject {test_subj:02d}] ==========")
 
-        # Check model file path
         model_dir = "/home/brainlab/Workspace/jycha/SSVEP/model_path"
-        model_path = os.path.join(model_dir, f"StimAutoCorrLee2019_Sub{subj}_EEGNet_{ch_tag}.pth")
+        model_path = os.path.join(model_dir, f"LOSOStimAutoCorrNakanishi2015_sub{test_subj}_EEGNet_{ch_tag}.pth")
 
         if not os.path.exists(model_path):
             print(f"[Warning] Model file not found: {model_path}. Skipping...")
             continue
 
-        # Load Test Dataset Only
-        test_dataset = Lee2019Dataset(subjects=[subj], train=False, pick_channels=args.pick_channels)
+        # Load Test Dataset
+        test_dataset = Lee2019Dataset_LOSO(subjects=[test_subj], pick_channels=args.pick_channels)
 
         n_channels = test_dataset.C
         n_samples = test_dataset.T
@@ -212,7 +210,7 @@ def main(args):
                                           hidden_dim=64).to(device)
 
         # Load Saved Weights
-        print(f"[Info] Loading model from {model_path}...")
+        print(f"[Info] Loading LOSO model from {model_path}...")
         try:
             checkpoint = torch.load(model_path, weights_only=False)
 
@@ -236,7 +234,7 @@ def main(args):
                     corrector.load_state_dict(checkpoint["corrector"])
 
             best_acc_log = checkpoint.get("best_acc", 0.0)
-            print(f"[Info] Model loaded successfully (Best Valid Acc: {best_acc_log:.4f})")
+            print(f"[Info] Model loaded successfully (Train Best Acc: {best_acc_log:.4f})")
 
         except Exception as e:
             print(f"[Error] Failed to load model: {e}")
@@ -256,7 +254,7 @@ def main(args):
                 final_time_analysis[tw]['itr'].append(metrics['itr'])
 
     # Print Final Results
-    print(f"\n\n========== FINAL Session-Split Time Window Analysis (Avg over {len(subjects)} subjects) ==========")
+    print(f"\n\n========== FINAL LOSO Time Window Analysis (Avg over {len(subjects)} subjects) ==========")
     print(f"{'Time (s)':<10} | {'Mean Acc (%)':<25} | {'Mean ITR (bits/min)':<25}")
     print("-" * 70)
 
@@ -281,11 +279,11 @@ if __name__ == '__main__':
     parser.add_argument("--subjects", type=str, default="all", help=" '1,2,3', '1-10', '1-5,7,9-12', 'all' ")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--lr", type=float, default=0.005)
+    parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--d_query", type=int, default=16)
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--weight_decay", type=float, default=0.001)
-    parser.add_argument("--pick_channels", type=str, default="P3,P4,P7,P8,Pz,PO9,PO10,O1,O2,Oz", help=" 'all' ")
+    parser.add_argument("--d_model", type=int, default=32)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--pick_channels", type=str, default="PO3,PO4,PO7,PO8,POz,O1,O2,Oz", help=" 'all' ")
     args = parser.parse_args()
 
     if isinstance(args.pick_channels, str):
