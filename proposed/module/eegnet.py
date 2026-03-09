@@ -4,12 +4,18 @@ import torch.nn as nn
 
 
 class EEGNet(nn.Module):
-    def __init__(self, chans, samples, dropoutRate=0.5, kernLength=64, F1=8, D=2, F2=16):
+    def __init__(self, chans, dropoutRate=0.5, kernLength=256, F1=96, D=1, F2=96):
+        """
+        :param dropoutRate: Dropout fraction to prevent overfitting
+        :param kernLength: Length of the temporal convolution kernel
+        :param F1: Number of temporal filters
+        :param D: Number of spatial filters to learn within each temporal convolution
+        :param F2: Number of pointwise filters (final feature maps)
+        """
         super().__init__()
         self.chans = chans
-        self.samples = samples
 
-        # First temporal convolution
+        # Temporal convolution
         self.conv1 = nn.Conv2d(1, F1, (1, kernLength), padding=(0, kernLength // 2), bias=False)
         self.bn1 = nn.BatchNorm2d(F1)
 
@@ -20,51 +26,31 @@ class EEGNet(nn.Module):
         self.avgpool1 = nn.AvgPool2d((1, 4))
         self.drop1 = nn.Dropout(dropoutRate)
 
-        # Separable convolution (temporal filtering)
+        # Separable convolution (Temporal + Pointwise)
         self.separableConv = nn.Conv2d(F1 * D, F2, (1, 16), padding=(0, 8), bias=False)
         self.bn3 = nn.BatchNorm2d(F2)
         self.avgpool2 = nn.AvgPool2d((1, 8))
         self.drop2 = nn.Dropout(dropoutRate)
 
-        # Compute output dimensions dynamically
-        with torch.no_grad():
-            dummy = torch.zeros(1, 1, chans, samples)  # (B,1,C,T)
-            out = self.forward_features(dummy)
-            B, C, H, W = out.shape
-            self.feature_dim = C
-            self.sequence_len = W
-            self.out_dim = C * W  # legacy flatten size
 
-
-    def forward_features(self, x):
+    def forward(self, x):
+        """
+        Input: x (B, 1, C, T)
+        Output: x (B, 96, 1, T')    # T' is the compressed time-step after pooling operations
+        """
         x = self.conv1(x)
         x = self.bn1(x)
+
         x = self.depthwiseConv(x)
         x = self.bn2(x)
         x = self.elu(x)
         x = self.avgpool1(x)
         x = self.drop1(x)
+
         x = self.separableConv(x)
         x = self.bn3(x)
         x = self.elu(x)
         x = self.avgpool2(x)
         x = self.drop2(x)
-        return x                    # (B, F2, 1, W')
 
-
-    def forward(self, x, return_sequence=False):
-        """
-        Args:
-            x: (B, 1, chans, samples)
-            return_sequence: if True, return (B, N, D) for attention
-        """
-        x = self.forward_features(x)  # (B, F2, 1, W')
-        B, C, H, W = x.shape
-
-        if return_sequence:
-            # Convert (B, C, 1, W) → (B, W, C)
-            x = x.squeeze(2).permute(0, 2, 1).contiguous()  # (B, N=W, D=C)
-            return x  # sequence for attention: (B, N, D)
-        else:
-            # Legacy mode (for classifier)
-            return x.view(B, -1)
+        return x                    # (B, F2, 1, T')
